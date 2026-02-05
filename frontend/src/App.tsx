@@ -94,6 +94,7 @@ function App() {
   const [lastSnapshotAt, setLastSnapshotAt] = useState<Date | null>(null);
   const [channelOffset, setChannelOffset] = useState(0);
   const [selectedPlot, setSelectedPlot] = useState<PlotSelection>(null);
+  const channelWindow = 4;
 
   useEffect(() => {
     const fetchStatus = () => {
@@ -157,8 +158,8 @@ function App() {
     return [0, 1, 2, 3];
   }, [snapshot.channels, snapshot.counts_by_channel]);
 
-  const maxOffset = Math.max(0, channels.length - 4);
-  const visibleChannels = channels.slice(channelOffset, channelOffset + 4);
+  const maxOffset = Math.max(0, channels.length - channelWindow);
+  const visibleChannels = channels.slice(channelOffset, channelOffset + channelWindow);
 
   const countsMax = Math.max(1, ...Object.values(snapshot.counts_by_channel));
   const heatMax = Math.max(1, ...snapshot.ratemap_8x8.flat());
@@ -169,33 +170,51 @@ function App() {
   return (
     <div className="app">
       <header className="top-bar">
-        <div className="controls">
-          <button onClick={startAcq} disabled={status.running}>
-            Start
-          </button>
-          <button onClick={stopAcq} disabled={!status.running}>
-            Stop
-          </button>
-        </div>
-        <div className="status">
-          <span className={status.connected ? "dot ok" : "dot warn"} />
-          <span>{status.connected ? "Connected" : "Disconnected"}</span>
-          <span className={status.running ? "pill running" : "pill stopped"}>
-            {status.running ? "Running" : "Stopped"}
-          </span>
-          {lastStatusAt ? (
-            <span className="timestamp">Status: {lastStatusAt.toLocaleTimeString()}</span>
-          ) : null}
-          {status.last_error ? <span className="error">{status.last_error}</span> : null}
+        <div className="app-container top-bar-content">
+          <div className="controls">
+            <button onClick={startAcq} disabled={status.running}>
+              Start
+            </button>
+            <button onClick={stopAcq} disabled={!status.running}>
+              Stop
+            </button>
+          </div>
+          <div className="status">
+            <span className={status.connected ? "dot ok" : "dot warn"} />
+            <span>{status.connected ? "Connected" : "Disconnected"}</span>
+            <span className={status.running ? "pill running" : "pill stopped"}>
+              {status.running ? "Running" : "Stopped"}
+            </span>
+            {lastStatusAt ? (
+              <span className="timestamp">Status: {lastStatusAt.toLocaleTimeString()}</span>
+            ) : null}
+            {status.last_error ? <span className="error">{status.last_error}</span> : null}
+          </div>
         </div>
       </header>
 
-      <main className="grid">
+      <main className="app-container grid">
         <section className="left-panel">
           <div className="panel">
-            <h2>Counts x Channel</h2>
+            <div className="panel-header">
+              <div>
+                <h2>Counts x Channel</h2>
+                <p className="subtitle">Showing {channelWindow} channels at a time</p>
+              </div>
+              <div className="slider">
+                <label htmlFor="countsChannelOffset">Channel window</label>
+                <input
+                  id="countsChannelOffset"
+                  type="range"
+                  min={0}
+                  max={maxOffset}
+                  value={channelOffset}
+                  onChange={(event) => setChannelOffset(Number(event.target.value))}
+                />
+              </div>
+            </div>
             <div className="bar-chart">
-              {channels.map((ch) => {
+              {visibleChannels.map((ch) => {
                 const count = snapshot.counts_by_channel[String(ch)] || 0;
                 const height = (count / countsMax) * 100;
                 return (
