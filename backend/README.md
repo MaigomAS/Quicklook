@@ -13,7 +13,7 @@ pip install -r backend/requirements.txt
 ## Run
 
 ```bash
-uvicorn backend.src.main:app --host 0.0.0.0 --port 8000
+QUICKLOOK_MODE=live uvicorn backend.src.main:app --host 0.0.0.0 --port 8000
 ```
 
 ## Environment Variables
@@ -23,3 +23,7 @@ uvicorn backend.src.main:app --host 0.0.0.0 --port 8000
 - `WINDOW_S` (default `10`)
 - `CHANNELS` (default `4`)
 - `CORS_ORIGINS` (comma-separated, default `*`)
+- `QUICKLOOK_MODE` (`live`, `record`, `replay`)
+- `QUICKLOOK_RECORD_PATH` (recording output file)
+- `QUICKLOOK_REPLAY_PATH` (recording input file)
+- `QUICKLOOK_REPLAY_SPEED` (float, default `1.0`)
