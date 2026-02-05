@@ -1,7 +1,7 @@
 :root {
   font-family: "Inter", system-ui, sans-serif;
-  color: #1f2a3a;
-  background-color: #f5f7fb;
+  color: #0f172a;
+  background-color: #eef2f7;
 }
 
 * {
@@ -16,13 +16,24 @@ body {
   min-height: 100vh;
 }
 
+.app-container {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
 .top-bar {
+  background: linear-gradient(120deg, #0b1120 0%, #111827 60%, #1e293b 100%);
+  color: #f8fafc;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+.top-bar-content {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 16px 24px;
-  background: #0f172a;
-  color: #f8fafc;
+  padding: 16px 0;
+  gap: 16px;
 }
 
 .controls button {
@@ -89,17 +100,18 @@ body {
 
 .grid {
   display: grid;
-  grid-template-columns: 1fr 1.2fr;
-  gap: 16px;
-  padding: 16px 24px 32px;
+  grid-template-columns: minmax(0, 1fr) minmax(360px, 480px);
+  gap: 20px;
+  padding: 20px 0 32px;
 }
 
 .panel {
-  background: white;
-  padding: 16px;
-  border-radius: 12px;
-  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
+  background: #ffffff;
+  padding: 18px;
+  border-radius: 16px;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
   margin-bottom: 16px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
 }
 
 .left-panel,
@@ -110,10 +122,11 @@ body {
 
 .bar-chart {
   display: flex;
-  gap: 10px;
+  gap: 16px;
   align-items: flex-end;
   height: 180px;
-  padding-top: 16px;
+  padding-top: 12px;
+  justify-content: flex-start;
 }
 
 .bar-item {
@@ -125,22 +138,26 @@ body {
 }
 
 .bar {
-  width: 22px;
-  background: #2563eb;
-  border-radius: 6px 6px 0 0;
+  width: 28px;
+  background: linear-gradient(180deg, #2563eb 0%, #1d4ed8 100%);
+  border-radius: 8px 8px 0 0;
 }
 
 .heatmap {
   display: grid;
-  grid-template-columns: repeat(8, 1fr);
-  gap: 4px;
+  grid-template-columns: repeat(8, var(--heat-cell-size));
+  grid-auto-rows: var(--heat-cell-size);
+  gap: 6px;
+  justify-content: start;
+  --heat-cell-size: clamp(28px, 4.8vw, 56px);
 }
 
 .heat-cell {
-  width: 100%;
-  padding-top: 100%;
-  border-radius: 4px;
+  width: var(--heat-cell-size);
+  height: var(--heat-cell-size);
+  border-radius: 6px;
   border: 1px solid #e2e8f0;
+  background: #f8fafc;
 }
 
 .panel-header {
@@ -173,10 +190,16 @@ body {
 
 .mini-plot {
   border: 1px solid #e2e8f0;
-  border-radius: 10px;
-  padding: 8px;
+  border-radius: 12px;
+  padding: 10px;
   background: #f8fafc;
   cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.mini-plot:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
 }
 
 .mini-title {
@@ -203,11 +226,12 @@ body {
 
 .modal-content {
   background: white;
-  border-radius: 12px;
+  border-radius: 16px;
   padding: 24px;
   max-width: 720px;
   width: 100%;
   position: relative;
+  border: 1px solid rgba(148, 163, 184, 0.2);
 }
 
 .notes {
@@ -229,12 +253,37 @@ body {
   cursor: pointer;
 }
 
-@media (max-width: 960px) {
+@media (max-width: 1100px) {
   .grid {
     grid-template-columns: 1fr;
   }
+}
 
+@media (max-width: 960px) {
   .mini-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .app-container {
+    padding: 0 16px;
+  }
+
+  .top-bar-content {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+@media (max-width: 640px) {
+  .bar-chart {
+    gap: 12px;
+  }
+
+  .bar {
+    width: 22px;
+  }
+
+  .heatmap {
+    --heat-cell-size: clamp(24px, 10vw, 48px);
   }
 }
