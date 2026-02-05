@@ -1,0 +1,24 @@
+stages:
+  - build
+
+simulator-build:
+  stage: build
+  image: gcc:13
+  script:
+    - gcc -O2 -std=c11 -Wall -Wextra -o simulator/simulator simulator/src/main.c
+
+backend-check:
+  stage: build
+  image: python:3.11
+  script:
+    - python -m pip install --upgrade pip
+    - pip install -r backend/requirements.txt
+    - python -c "import fastapi, uvicorn, pydantic"
+
+frontend-build:
+  stage: build
+  image: node:20
+  script:
+    - cd frontend
+    - npm install
+    - npm run build
