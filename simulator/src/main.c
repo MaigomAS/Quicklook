@@ -208,7 +208,6 @@ static int json_find_key(const char *json, jsmntok_t *tokens, int count, int obj
     int i = obj_index + 1;
     for (int pair = 0; pair < obj->size; pair++) {
         jsmntok_t *key_tok = &tokens[i];
-        jsmntok_t *val_tok = &tokens[i + 1];
         if (json_token_eq(json, key_tok, key)) {
             return i + 1;
         }
