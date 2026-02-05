@@ -42,26 +42,91 @@ const defaultSnapshot: Snapshot = {
 
 const streams: PlotSelection["stream"][] = ["adc_x", "adc_gtop", "adc_gbot"];
 
+const ensureRatemap = (ratemap?: number[][]) => {
+  if (!ratemap || ratemap.length !== 8 || ratemap.some((row) => row.length !== 8)) {
+    return Array.from({ length: 8 }, () => Array.from({ length: 8 }, () => 0));
+  }
+  return ratemap.map((row) => row.map((value) => (Number.isFinite(value) ? value : 0)));
+};
+
+const normalizeHistogramRecord = (record?: Record<string, number[]>) => {
+  if (!record) {
+    return {};
+  }
+  return Object.fromEntries(
+    Object.entries(record).map(([key, values]) => [
+      key,
+      Array.isArray(values) ? values.map((value) => (Number.isFinite(value) ? value : 0)) : [],
+    ])
+  );
+};
+
+const normalizeSnapshot = (data?: Partial<Snapshot>) => {
+  if (!data) {
+    return defaultSnapshot;
+  }
+  return {
+    window_s: Number.isFinite(data.window_s) ? data.window_s! : defaultSnapshot.window_s,
+    t_start_us: Number.isFinite(data.t_start_us) ? data.t_start_us! : defaultSnapshot.t_start_us,
+    t_end_us: Number.isFinite(data.t_end_us) ? data.t_end_us! : defaultSnapshot.t_end_us,
+    channels: Array.isArray(data.channels) ? data.channels : defaultSnapshot.channels,
+    counts_by_channel: data.counts_by_channel ?? defaultSnapshot.counts_by_channel,
+    histograms: {
+      adc_x: normalizeHistogramRecord(data.histograms?.adc_x),
+      adc_gtop: normalizeHistogramRecord(data.histograms?.adc_gtop),
+      adc_gbot: normalizeHistogramRecord(data.histograms?.adc_gbot),
+    },
+    ratemap_8x8: ensureRatemap(data.ratemap_8x8),
+    notes: Array.isArray(data.notes) && data.notes.length > 0 ? data.notes : defaultSnapshot.notes,
+  };
+};
+
+const normalizeStatus = (data?: Partial<Status>) => ({
+  running: Boolean(data?.running),
+  connected: Boolean(data?.connected),
+  last_error: data?.last_error ?? null,
+});
+
 function App() {
   const [status, setStatus] = useState<Status>({ running: false, connected: false });
   const [snapshot, setSnapshot] = useState<Snapshot>(defaultSnapshot);
+  const [lastStatusAt, setLastStatusAt] = useState<Date | null>(null);
+  const [lastSnapshotAt, setLastSnapshotAt] = useState<Date | null>(null);
   const [channelOffset, setChannelOffset] = useState(0);
   const [selectedPlot, setSelectedPlot] = useState<PlotSelection>(null);
 
   useEffect(() => {
-    const statusTimer = setInterval(() => {
+    const fetchStatus = () => {
       fetch(`${backendUrl}/status`)
         .then((res) => res.json())
-        .then((data: Status) => setStatus(data))
-        .catch(() => setStatus((prev) => ({ ...prev, connected: false })));
-    }, 2000);
+        .then((data: Status) => {
+          setStatus(normalizeStatus(data));
+          setLastStatusAt(new Date());
+        })
+        .catch(() =>
+          setStatus((prev) => ({
+            ...prev,
+            connected: false,
+            last_error: prev.last_error ?? "Status fetch failed",
+          }))
+        );
+    };
 
-    const snapshotTimer = setInterval(() => {
+    const fetchSnapshot = () => {
       fetch(`${backendUrl}/snapshot`)
         .then((res) => res.json())
-        .then((data: Snapshot) => setSnapshot(data))
-        .catch(() => setSnapshot(defaultSnapshot));
-    }, 10000);
+        .then((data: Snapshot) => {
+          setSnapshot(normalizeSnapshot(data));
+          setLastSnapshotAt(new Date());
+        })
+        .catch(() => setSnapshot((prev) => ({ ...prev, notes: ["snapshot fetch failed"] })));
+    };
+
+    fetchStatus();
+    fetchSnapshot();
+
+    const statusTimer = setInterval(fetchStatus, 2000);
+    const snapshotTimer = setInterval(fetchSnapshot, 10000);
 
     return () => {
       clearInterval(statusTimer);
@@ -83,8 +148,14 @@ function App() {
     if (snapshot.channels.length > 0) {
       return snapshot.channels;
     }
+    const inferred = Object.keys(snapshot.counts_by_channel)
+      .map((key) => Number(key))
+      .filter((value) => Number.isFinite(value));
+    if (inferred.length > 0) {
+      return inferred;
+    }
     return [0, 1, 2, 3];
-  }, [snapshot.channels]);
+  }, [snapshot.channels, snapshot.counts_by_channel]);
 
   const maxOffset = Math.max(0, channels.length - 4);
   const visibleChannels = channels.slice(channelOffset, channelOffset + 4);
@@ -112,6 +183,9 @@ function App() {
           <span className={status.running ? "pill running" : "pill stopped"}>
             {status.running ? "Running" : "Stopped"}
           </span>
+          {lastStatusAt ? (
+            <span className="timestamp">Status: {lastStatusAt.toLocaleTimeString()}</span>
+          ) : null}
           {status.last_error ? <span className="error">{status.last_error}</span> : null}
         </div>
       </header>
@@ -134,7 +208,12 @@ function App() {
             </div>
           </div>
           <div className="panel">
-            <h2>Rate Map (8x8)</h2>
+            <div className="panel-header">
+              <h2>Rate Map (8x8)</h2>
+              {lastSnapshotAt ? (
+                <span className="timestamp">Snapshot: {lastSnapshotAt.toLocaleTimeString()}</span>
+              ) : null}
+            </div>
             <div className="heatmap">
               {snapshot.ratemap_8x8.map((row, rowIndex) =>
                 row.map((value, colIndex) => {
@@ -157,7 +236,12 @@ function App() {
         <section className="right-panel">
           <div className="panel">
             <div className="panel-header">
-              <h2>Histograms</h2>
+              <div>
+                <h2>Histograms</h2>
+                <p className="subtitle">
+                  Window: {snapshot.window_s}s · {snapshot.t_start_us} → {snapshot.t_end_us} μs
+                </p>
+              </div>
               <div className="slider">
                 <label htmlFor="channelOffset">Channel window</label>
                 <input
@@ -189,6 +273,14 @@ function App() {
                 })
               )}
             </div>
+          </div>
+          <div className="panel">
+            <h2>Notes</h2>
+            <ul className="notes">
+              {snapshot.notes.map((note, index) => (
+                <li key={index}>{note}</li>
+              ))}
+            </ul>
           </div>
         </section>
       </main>

@@ -10,6 +10,9 @@ simulator/simulator
 # --- OS ---
 .DS_Store
 
+# --- Node ---
+**/node_modules/
+
 # Quicklook recorded data
 backend/data/
 *.ndjson
