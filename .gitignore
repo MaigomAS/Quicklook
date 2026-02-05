@@ -9,3 +9,7 @@ simulator/simulator
 
 # --- OS ---
 .DS_Store
+
+# Quicklook recorded data
+backend/data/
+*.ndjson
