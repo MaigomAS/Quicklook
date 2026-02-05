@@ -1,0 +1,11 @@
+# --- Python ---
+**/.venv/
+**/__pycache__/
+*.pyc
+*.pyo
+
+# --- Build artifacts ---
+simulator/simulator
+
+# --- OS ---
+.DS_Store
