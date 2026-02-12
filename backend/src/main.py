@@ -192,8 +192,10 @@ def process_event(state: AcquisitionState, event: dict) -> None:
     with state.lock:
         if t_us <= 0:
             state.quality["invalid_fields"] += 1
+            state.quality["invalid_fields"] += 1
             return
         if channel < 0 or channel >= state.channels:
+            state.quality["invalid_channel"] += 1
             state.quality["invalid_channel"] += 1
             return
 
@@ -235,8 +237,7 @@ def run_live(state: AcquisitionState, record_fp: Optional[object]) -> None:
             except json.JSONDecodeError:
                 with state.lock:
                     state.quality["invalid_json"] += 1
-                if state.last_error is None:
-                    state.last_error = "invalid json"
+                    state.quality["invalid_json"] += 1
                 continue
             process_event(state, event)
 
@@ -259,8 +260,7 @@ def run_replay(state: AcquisitionState) -> None:
             except json.JSONDecodeError:
                 with state.lock:
                     state.quality["invalid_json"] += 1
-                if state.last_error is None:
-                    state.last_error = "invalid json"
+                    state.quality["invalid_json"] += 1
                 continue
             t_us = int(event.get("t_us", 0))
             if last_t_us is not None:
