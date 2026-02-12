@@ -301,7 +301,19 @@ function App() {
           </div>
           <div className="settings-grid">
             <label>
-              Window (s)
+              <span className="label-with-help">
+                <span>Aggregation Window (s)</span>
+                <span className="help-tooltip-wrap">
+                  <span className="help-icon" tabIndex={0} aria-label="Aggregation window help">
+                    ⓘ
+                  </span>
+                  <span className="help-tooltip" role="tooltip">
+                    Aggregation window in seconds. This defines the time range used to compute
+                    rates in /snapshot (does not control total acquisition duration). Used for
+                    computing per-channel rates from snapshot data.
+                  </span>
+                </span>
+              </span>
               <input
                 type="number"
                 min={settings.limits?.min_window_s ?? 1}
@@ -311,6 +323,10 @@ function App() {
                   setSettings((prev) => ({ ...prev, window_s: Number(event.target.value) }))
                 }
               />
+              <span className="input-helper">
+                Aggregation window in seconds. This defines the time range used to compute rates in
+                /snapshot (does not control total acquisition duration).
+              </span>
             </label>
             <label>
               Max channels
@@ -389,7 +405,8 @@ function App() {
             <div>
               <h2>Histograms + Instant Rate Trend</h2>
               <p className="subtitle">
-                4 channels view · Window: {snapshot.window_s}s · {snapshot.t_start_us} → {snapshot.t_end_us} μs
+                4 channels view · Aggregation Window: {snapshot.window_s}s · {snapshot.t_start_us} →{" "}
+                {snapshot.t_end_us} μs
               </p>
             </div>
             <div className="channel-nav">
