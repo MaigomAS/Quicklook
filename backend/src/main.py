@@ -55,6 +55,13 @@ class AcquisitionState:
     window: AggregationWindow = field(init=False)
     rate_history: Dict[int, deque] = field(default_factory=dict)
     rate_history_t_end_us: deque = field(default_factory=deque)
+    quality: Dict[str, int] = field(
+        default_factory=lambda: {
+            "invalid_json": 0,
+            "invalid_channel": 0,
+            "invalid_fields": 0,
+        }
+    )
 
     def __post_init__(self) -> None:
         self.window = AggregationWindow(window_s=self.window_s)
@@ -95,6 +102,11 @@ def empty_snapshot(window_s: int, channels: int) -> dict:
         "ratemap_8x8": [[0.0 for _ in range(8)] for _ in range(8)],
         "rate_history": {str(channel): [] for channel in channel_ids},
         "rate_history_t_end_us": [],
+        "quality": {
+            "invalid_json": 0,
+            "invalid_channel": 0,
+            "invalid_fields": 0,
+        },
         "notes": ["no data yet"],
     }
 
@@ -104,6 +116,7 @@ def build_snapshot(
     channels: int,
     rate_history: Dict[int, deque],
     rate_history_t_end_us: deque,
+    quality: Dict[str, int],
 ) -> dict:
     channel_ids = list(range(channels))
     counts_by_channel = {
@@ -153,6 +166,7 @@ def build_snapshot(
             str(channel): list(rate_history.get(channel, deque())) for channel in channel_ids
         },
         "rate_history_t_end_us": list(rate_history_t_end_us),
+        "quality": dict(quality),
         "notes": window.notes,
     }
 
@@ -164,13 +178,25 @@ def ensure_hist(hist_map: Dict[int, List[int]], channel: int) -> List[int]:
 
 
 def process_event(state: AcquisitionState, event: dict) -> None:
-    t_us = int(event.get("t_us", 0))
-    channel = int(event.get("channel", -1))
-    adc_x = int(event.get("adc_x", 0))
-    adc_gtop = int(event.get("adc_gtop", 0))
-    adc_gbot = int(event.get("adc_gbot", 0))
+    try:
+        t_us = int(event.get("t_us", 0))
+        channel = int(event.get("channel", -1))
+        adc_x = int(event.get("adc_x", 0))
+        adc_gtop = int(event.get("adc_gtop", 0))
+        adc_gbot = int(event.get("adc_gbot", 0))
+    except (TypeError, ValueError):
+        with state.lock:
+            state.quality["invalid_fields"] += 1
+        return
 
     with state.lock:
+        if t_us <= 0:
+            state.quality["invalid_fields"] += 1
+            return
+        if channel < 0 or channel >= state.channels:
+            state.quality["invalid_channel"] += 1
+            return
+
         if state.window.t_start_us == 0:
             state.window.t_start_us = t_us
         state.window.t_end_us = t_us
@@ -186,6 +212,7 @@ def process_event(state: AcquisitionState, event: dict) -> None:
                 state.channels,
                 state.rate_history,
                 state.rate_history_t_end_us,
+                state.quality,
             )
             state.window.reset()
 
@@ -206,7 +233,10 @@ def run_live(state: AcquisitionState, record_fp: Optional[object]) -> None:
             try:
                 event = json.loads(line)
             except json.JSONDecodeError:
-                state.last_error = "invalid json"
+                with state.lock:
+                    state.quality["invalid_json"] += 1
+                if state.last_error is None:
+                    state.last_error = "invalid json"
                 continue
             process_event(state, event)
 
@@ -227,7 +257,10 @@ def run_replay(state: AcquisitionState) -> None:
             try:
                 event = json.loads(line)
             except json.JSONDecodeError:
-                state.last_error = "invalid json"
+                with state.lock:
+                    state.quality["invalid_json"] += 1
+                if state.last_error is None:
+                    state.last_error = "invalid json"
                 continue
             t_us = int(event.get("t_us", 0))
             if last_t_us is not None:
@@ -245,6 +278,12 @@ def run_acquisition(state: AcquisitionState) -> None:
     state.window.reset()
     state.rate_history = {}
     state.rate_history_t_end_us = deque(maxlen=30)
+    # Quality counters are per-run and reset only when a new acquisition starts.
+    state.quality = {
+        "invalid_json": 0,
+        "invalid_channel": 0,
+        "invalid_fields": 0,
+    }
     try:
         if state.mode == MODE_REPLAY:
             run_replay(state)
@@ -271,6 +310,7 @@ def run_acquisition(state: AcquisitionState) -> None:
                     state.channels,
                     state.rate_history,
                     state.rate_history_t_end_us,
+                    state.quality,
                 )
             state.window.reset()
         state.running = False
