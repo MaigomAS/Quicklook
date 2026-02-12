@@ -12,6 +12,8 @@ type Snapshot = {
     adc_gbot: Record<string, number[]>;
   };
   ratemap_8x8: number[][];
+  rate_history: Record<string, number[]>;
+  rate_history_t_end_us: number[];
   notes: string[];
 };
 
@@ -21,62 +23,102 @@ type Status = {
   last_error?: string | null;
 };
 
+type BackendConfig = {
+  window_s: number;
+  channels: number;
+  limits?: {
+    min_window_s: number;
+    max_window_s: number;
+    min_channels: number;
+    max_channels: number;
+  };
+};
+
 type PlotSelection = {
-  channel: number;
-  stream: "adc_x" | "adc_gtop" | "adc_gbot";
+  title: string;
+  kind: "histogram" | "line";
   data: number[];
 } | null;
 
 const backendUrl = import.meta.env.VITE_BACKEND_URL || "http://localhost:8000";
 
+const defaultChannels = Array.from({ length: 64 }, (_, index) => index);
 const defaultSnapshot: Snapshot = {
   window_s: 10,
   t_start_us: 0,
   t_end_us: 0,
-  channels: [],
-  counts_by_channel: {},
-  histograms: { adc_x: {}, adc_gtop: {}, adc_gbot: {} },
+  channels: defaultChannels,
+  counts_by_channel: Object.fromEntries(defaultChannels.map((ch) => [String(ch), 0])),
+  histograms: {
+    adc_x: Object.fromEntries(defaultChannels.map((ch) => [String(ch), Array(64).fill(0)])),
+    adc_gtop: Object.fromEntries(defaultChannels.map((ch) => [String(ch), Array(64).fill(0)])),
+    adc_gbot: Object.fromEntries(defaultChannels.map((ch) => [String(ch), Array(64).fill(0)])),
+  },
   ratemap_8x8: Array.from({ length: 8 }, () => Array.from({ length: 8 }, () => 0)),
+  rate_history: Object.fromEntries(defaultChannels.map((ch) => [String(ch), []])),
+  rate_history_t_end_us: [],
   notes: ["waiting for data"],
 };
 
-const streams: PlotSelection["stream"][] = ["adc_x", "adc_gtop", "adc_gbot"];
+const histogramStreams: Array<{ key: "adc_x" | "adc_gtop" | "adc_gbot"; label: string }> = [
+  { key: "adc_x", label: "adc_x" },
+  { key: "adc_gtop", label: "adc_gtop" },
+  { key: "adc_gbot", label: "adc_gbot" },
+];
 
 const ensureRatemap = (ratemap?: number[][]) => {
   if (!ratemap || ratemap.length !== 8 || ratemap.some((row) => row.length !== 8)) {
-    return Array.from({ length: 8 }, () => Array.from({ length: 8 }, () => 0));
+    return defaultSnapshot.ratemap_8x8;
   }
   return ratemap.map((row) => row.map((value) => (Number.isFinite(value) ? value : 0)));
 };
 
-const normalizeHistogramRecord = (record?: Record<string, number[]>) => {
-  if (!record) {
-    return {};
-  }
-  return Object.fromEntries(
-    Object.entries(record).map(([key, values]) => [
-      key,
-      Array.isArray(values) ? values.map((value) => (Number.isFinite(value) ? value : 0)) : [],
-    ])
+const normalizeHistogramRecord = (record?: Record<string, number[]>, channels: number[] = defaultChannels) =>
+  Object.fromEntries(
+    channels.map((channel) => {
+      const values = record?.[String(channel)] ?? [];
+      return [
+        String(channel),
+        Array.isArray(values) ? values.map((value) => (Number.isFinite(value) ? value : 0)) : Array(64).fill(0),
+      ];
+    })
   );
-};
 
 const normalizeSnapshot = (data?: Partial<Snapshot>) => {
   if (!data) {
     return defaultSnapshot;
   }
+
+  const channels =
+    Array.isArray(data.channels) && data.channels.length > 0
+      ? data.channels.filter((value) => Number.isFinite(value))
+      : defaultChannels;
+
   return {
     window_s: Number.isFinite(data.window_s) ? data.window_s! : defaultSnapshot.window_s,
     t_start_us: Number.isFinite(data.t_start_us) ? data.t_start_us! : defaultSnapshot.t_start_us,
     t_end_us: Number.isFinite(data.t_end_us) ? data.t_end_us! : defaultSnapshot.t_end_us,
-    channels: Array.isArray(data.channels) ? data.channels : defaultSnapshot.channels,
-    counts_by_channel: data.counts_by_channel ?? defaultSnapshot.counts_by_channel,
+    channels,
+    counts_by_channel: Object.fromEntries(
+      channels.map((channel) => [String(channel), data.counts_by_channel?.[String(channel)] ?? 0])
+    ),
     histograms: {
-      adc_x: normalizeHistogramRecord(data.histograms?.adc_x),
-      adc_gtop: normalizeHistogramRecord(data.histograms?.adc_gtop),
-      adc_gbot: normalizeHistogramRecord(data.histograms?.adc_gbot),
+      adc_x: normalizeHistogramRecord(data.histograms?.adc_x, channels),
+      adc_gtop: normalizeHistogramRecord(data.histograms?.adc_gtop, channels),
+      adc_gbot: normalizeHistogramRecord(data.histograms?.adc_gbot, channels),
     },
     ratemap_8x8: ensureRatemap(data.ratemap_8x8),
+    rate_history: Object.fromEntries(
+      channels.map((channel) => [
+        String(channel),
+        Array.isArray(data.rate_history?.[String(channel)])
+          ? data.rate_history?.[String(channel)]?.map((value) => (Number.isFinite(value) ? value : 0)) ?? []
+          : [],
+      ])
+    ),
+    rate_history_t_end_us: Array.isArray(data.rate_history_t_end_us)
+      ? data.rate_history_t_end_us.filter((value) => Number.isFinite(value))
+      : [],
     notes: Array.isArray(data.notes) && data.notes.length > 0 ? data.notes : defaultSnapshot.notes,
   };
 };
@@ -92,9 +134,20 @@ function App() {
   const [snapshot, setSnapshot] = useState<Snapshot>(defaultSnapshot);
   const [lastStatusAt, setLastStatusAt] = useState<Date | null>(null);
   const [lastSnapshotAt, setLastSnapshotAt] = useState<Date | null>(null);
-  const [channelOffset, setChannelOffset] = useState(0);
   const [selectedPlot, setSelectedPlot] = useState<PlotSelection>(null);
-  const channelWindow = 4;
+  const [histOffset, setHistOffset] = useState(0);
+  const [settingsError, setSettingsError] = useState<string | null>(null);
+  const [savingSettings, setSavingSettings] = useState(false);
+  const [settings, setSettings] = useState<BackendConfig>({
+    window_s: 10,
+    channels: 64,
+    limits: {
+      min_window_s: 1,
+      max_window_s: 3600,
+      min_channels: 1,
+      max_channels: 64,
+    },
+  });
 
   useEffect(() => {
     const fetchStatus = () => {
@@ -113,6 +166,23 @@ function App() {
         );
     };
 
+    const fetchConfig = () => {
+      fetch(`${backendUrl}/config`)
+        .then((res) => res.json())
+        .then((data: BackendConfig) => {
+          if (!Number.isFinite(data.window_s) || !Number.isFinite(data.channels)) {
+            return;
+          }
+          setSettings((prev) => ({
+            ...prev,
+            window_s: data.window_s,
+            channels: data.channels,
+            limits: data.limits ?? prev.limits,
+          }));
+        })
+        .catch(() => setSettingsError((prev) => prev ?? "Could not fetch settings"));
+    };
+
     const fetchSnapshot = () => {
       fetch(`${backendUrl}/snapshot`)
         .then((res) => res.json())
@@ -124,6 +194,7 @@ function App() {
     };
 
     fetchStatus();
+    fetchConfig();
     fetchSnapshot();
 
     const statusTimer = setInterval(fetchStatus, 2000);
@@ -145,27 +216,54 @@ function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  const channels = useMemo(() => {
-    if (snapshot.channels.length > 0) {
-      return snapshot.channels;
-    }
-    const inferred = Object.keys(snapshot.counts_by_channel)
-      .map((key) => Number(key))
-      .filter((value) => Number.isFinite(value));
-    if (inferred.length > 0) {
-      return inferred;
-    }
-    return [0, 1, 2, 3];
-  }, [snapshot.channels, snapshot.counts_by_channel]);
-
-  const maxOffset = Math.max(0, channels.length - channelWindow);
-  const visibleChannels = channels.slice(channelOffset, channelOffset + channelWindow);
-
-  const countsMax = Math.max(1, ...Object.values(snapshot.counts_by_channel));
+  const channels = useMemo(() => snapshot.channels, [snapshot.channels]);
+  const countsMax = Math.max(1, ...channels.map((ch) => snapshot.counts_by_channel[String(ch)] || 0));
   const heatMax = Math.max(1, ...snapshot.ratemap_8x8.flat());
+
+  const histogramPageSize = 4;
+  const maxHistOffset = Math.max(0, channels.length - histogramPageSize);
+  const visibleHistogramChannels = channels.slice(histOffset, histOffset + histogramPageSize);
+
+  useEffect(() => {
+    if (histOffset > maxHistOffset) {
+      setHistOffset(maxHistOffset);
+    }
+  }, [histOffset, maxHistOffset]);
 
   const startAcq = () => fetch(`${backendUrl}/start`, { method: "POST" });
   const stopAcq = () => fetch(`${backendUrl}/stop`, { method: "POST" });
+
+  const saveSettings = async () => {
+    setSavingSettings(true);
+    setSettingsError(null);
+    try {
+      const response = await fetch(`${backendUrl}/config`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          window_s: Math.round(settings.window_s),
+          channels: Math.round(settings.channels),
+        }),
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        setSettingsError(payload?.detail ?? "Failed to save settings");
+        return;
+      }
+      setSettings((prev) => ({
+        ...prev,
+        window_s: payload.window_s,
+        channels: payload.channels,
+      }));
+      const freshSnapshot = await fetch(`${backendUrl}/snapshot`).then((res) => res.json());
+      setSnapshot(normalizeSnapshot(freshSnapshot));
+      setHistOffset(0);
+    } catch {
+      setSettingsError("Failed to save settings");
+    } finally {
+      setSavingSettings(false);
+    }
+  };
 
   return (
     <div className="app">
@@ -193,114 +291,175 @@ function App() {
         </div>
       </header>
 
-      <main className="app-container grid">
-        <section className="left-panel">
-          <div className="panel">
-            <div className="panel-header">
-              <div>
-                <h2>Counts x Channel</h2>
-                <p className="subtitle">Showing {channelWindow} channels at a time</p>
-              </div>
-              <div className="slider">
-                <label htmlFor="countsChannelOffset">Channel window</label>
-                <input
-                  id="countsChannelOffset"
-                  type="range"
-                  min={0}
-                  max={maxOffset}
-                  value={channelOffset}
-                  onChange={(event) => setChannelOffset(Number(event.target.value))}
-                />
-              </div>
-            </div>
-            <div className="bar-chart">
-              {visibleChannels.map((ch) => {
-                const count = snapshot.counts_by_channel[String(ch)] || 0;
-                const height = (count / countsMax) * 100;
-                return (
-                  <div key={ch} className="bar-item">
-                    <div className="bar" style={{ height: `${height}%` }} />
-                    <span>ch {ch}</span>
-                  </div>
-                );
-              })}
+      <main className="app-container dashboard-grid">
+        <section className="panel settings-panel">
+          <div className="panel-header">
+            <h2>Acquisition Settings</h2>
+            <button type="button" onClick={saveSettings} disabled={status.running || savingSettings}>
+              {savingSettings ? "Saving..." : "Apply"}
+            </button>
+          </div>
+          <div className="settings-grid">
+            <label>
+              Window (s)
+              <input
+                type="number"
+                min={settings.limits?.min_window_s ?? 1}
+                max={settings.limits?.max_window_s ?? 3600}
+                value={settings.window_s}
+                onChange={(event) =>
+                  setSettings((prev) => ({ ...prev, window_s: Number(event.target.value) }))
+                }
+              />
+            </label>
+            <label>
+              Max channels
+              <input
+                type="number"
+                min={settings.limits?.min_channels ?? 1}
+                max={settings.limits?.max_channels ?? 64}
+                value={settings.channels}
+                onChange={(event) =>
+                  setSettings((prev) => ({ ...prev, channels: Number(event.target.value) }))
+                }
+              />
+            </label>
+          </div>
+          <p className="subtitle">Stop acquisition before applying configuration changes.</p>
+          {settingsError ? <p className="settings-error">{settingsError}</p> : null}
+        </section>
+
+        <section className="panel counts-panel">
+          <div className="panel-header">
+            <div>
+              <h2>Counts per Channel</h2>
+              <p className="subtitle">
+                {channels.length} channels · linear scale · auto max ({countsMax})
+              </p>
             </div>
           </div>
-          <div className="panel">
-            <div className="panel-header">
-              <h2>Rate Map (8x8)</h2>
-              {lastSnapshotAt ? (
-                <span className="timestamp">Snapshot: {lastSnapshotAt.toLocaleTimeString()}</span>
-              ) : null}
-            </div>
-            <div className="heatmap">
-              {snapshot.ratemap_8x8.map((row, rowIndex) =>
-                row.map((value, colIndex) => {
-                  const intensity = value / heatMax;
-                  const color = `rgba(34, 102, 204, ${0.2 + intensity * 0.8})`;
-                  return (
-                    <div
-                      key={`${rowIndex}-${colIndex}`}
-                      className="heat-cell"
-                      style={{ backgroundColor: color }}
-                      title={`ch ${rowIndex * 8 + colIndex}: ${value.toFixed(2)} Hz`}
-                    />
-                  );
-                })
-              )}
-            </div>
+          <div className="bar-chart-64">
+            {channels.map((ch) => {
+              const count = snapshot.counts_by_channel[String(ch)] || 0;
+              const height = (count / countsMax) * 100;
+              return (
+                <div key={ch} className="bar-item-64" title={`ch ${ch}: ${count} counts`}>
+                  <div className="bar-64" style={{ height: `${height}%` }} />
+                  <span>ch {ch}</span>
+                </div>
+              );
+            })}
           </div>
         </section>
 
-        <section className="right-panel">
-          <div className="panel">
-            <div className="panel-header">
-              <div>
-                <h2>Histograms</h2>
-                <p className="subtitle">
-                  Window: {snapshot.window_s}s · {snapshot.t_start_us} → {snapshot.t_end_us} μs
-                </p>
-              </div>
-              <div className="slider">
-                <label htmlFor="channelOffset">Channel window</label>
-                <input
-                  id="channelOffset"
-                  type="range"
-                  min={0}
-                  max={maxOffset}
-                  value={channelOffset}
-                  onChange={(event) => setChannelOffset(Number(event.target.value))}
-                />
-              </div>
+        <section className="panel rate-panel">
+          <div className="panel-header">
+            <h2>Rate Map (8x8)</h2>
+            {lastSnapshotAt ? (
+              <span className="timestamp">Snapshot: {lastSnapshotAt.toLocaleTimeString()}</span>
+            ) : null}
+          </div>
+          <div className="heatmap">
+            {snapshot.ratemap_8x8.map((row, rowIndex) =>
+              row.map((value, colIndex) => {
+                const intensity = value / heatMax;
+                const color = `rgba(34, 102, 204, ${0.15 + intensity * 0.85})`;
+                return (
+                  <div
+                    key={`${rowIndex}-${colIndex}`}
+                    className="heat-cell"
+                    style={{ backgroundColor: color }}
+                    title={`ch ${rowIndex * 8 + colIndex}: ${value.toFixed(2)} Hz`}
+                  >
+                    {rowIndex * 8 + colIndex}
+                  </div>
+                );
+              })
+            )}
+          </div>
+          <div className="color-bar">
+            <span>0 Hz</span>
+            <div className="gradient" />
+            <span>{heatMax.toFixed(2)} Hz</span>
+          </div>
+        </section>
+
+        <section className="panel histograms-panel">
+          <div className="panel-header">
+            <div>
+              <h2>Histograms + Instant Rate Trend</h2>
+              <p className="subtitle">
+                4 channels view · Window: {snapshot.window_s}s · {snapshot.t_start_us} → {snapshot.t_end_us} μs
+              </p>
             </div>
-            <div className="mini-grid">
-              {visibleChannels.map((ch) =>
-                streams.map((stream) => {
-                  const data = snapshot.histograms[stream][String(ch)] || Array(64).fill(0);
+            <div className="channel-nav">
+              <button type="button" onClick={() => setHistOffset((prev) => Math.max(0, prev - histogramPageSize))}>
+                ↑
+              </button>
+              <span>
+                {histOffset + 1}-{Math.min(histOffset + histogramPageSize, channels.length)} / {channels.length}
+              </span>
+              <button
+                type="button"
+                onClick={() =>
+                  setHistOffset((prev) => Math.min(maxHistOffset, prev + histogramPageSize))
+                }
+              >
+                ↓
+              </button>
+            </div>
+          </div>
+          <div className="hist-row header">
+            <span>Channel</span>
+            <span>adc_x</span>
+            <span>adc_gtop</span>
+            <span>adc_gbot</span>
+            <span>rate vs time</span>
+          </div>
+          <div className="hist-table">
+            {visibleHistogramChannels.map((ch) => (
+              <div key={ch} className="hist-row hist-row-compact">
+                <div className="channel-label">ch {ch}</div>
+                {histogramStreams.map((stream) => {
+                  const data = snapshot.histograms[stream.key][String(ch)] || Array(64).fill(0);
                   return (
-                    <div
-                      key={`${ch}-${stream}`}
+                    <button
+                      key={`${ch}-${stream.key}`}
+                      type="button"
                       className="mini-plot"
-                      onClick={() => setSelectedPlot({ channel: ch, stream, data })}
+                      onClick={() =>
+                        setSelectedPlot({ title: `Channel ${ch} · ${stream.label}`, kind: "histogram", data })
+                      }
                     >
-                      <div className="mini-title">
-                        ch {ch} · {stream}
-                      </div>
-                      <Histogram data={data} height={48} />
-                    </div>
+                      <Histogram data={data} height={70} />
+                    </button>
                   );
-                })
-              )}
-            </div>
+                })}
+                <button
+                  type="button"
+                  className="mini-plot"
+                  onClick={() =>
+                    setSelectedPlot({
+                      title: `Channel ${ch} · Instant rate history`,
+                      kind: "line",
+                      data: snapshot.rate_history[String(ch)] ?? [],
+                    })
+                  }
+                >
+                  <LineSeries data={snapshot.rate_history[String(ch)] ?? []} height={70} />
+                </button>
+              </div>
+            ))}
           </div>
-          <div className="panel">
-            <h2>Notes</h2>
-            <ul className="notes">
-              {snapshot.notes.map((note, index) => (
-                <li key={index}>{note}</li>
-              ))}
-            </ul>
-          </div>
+        </section>
+
+        <section className="panel notes-panel">
+          <h2>Notes</h2>
+          <ul className="notes">
+            {snapshot.notes.map((note, index) => (
+              <li key={index}>{note}</li>
+            ))}
+          </ul>
         </section>
       </main>
 
@@ -310,10 +469,12 @@ function App() {
             <button className="close" onClick={() => setSelectedPlot(null)}>
               ✕
             </button>
-            <h3>
-              Channel {selectedPlot.channel} · {selectedPlot.stream}
-            </h3>
-            <Histogram data={selectedPlot.data} height={200} />
+            <h3>{selectedPlot.title}</h3>
+            {selectedPlot.kind === "histogram" ? (
+              <Histogram data={selectedPlot.data} height={220} />
+            ) : (
+              <LineSeries data={selectedPlot.data} height={220} />
+            )}
           </div>
         </div>
       ) : null}
@@ -328,16 +489,30 @@ function Histogram({ data, height }: { data: number[]; height: number }) {
       {data.map((value, index) => {
         const barHeight = (value / max) * height;
         return (
-          <rect
-            key={index}
-            x={index}
-            y={height - barHeight}
-            width={0.9}
-            height={barHeight}
-            rx={0.5}
-          />
+          <rect key={index} x={index} y={height - barHeight} width={0.9} height={barHeight} rx={0.5} />
         );
       })}
+    </svg>
+  );
+}
+
+function LineSeries({ data, height }: { data: number[]; height: number }) {
+  if (data.length === 0) {
+    return <div className="line-empty">no points yet</div>;
+  }
+
+  const max = Math.max(...data, 1);
+  const points = data
+    .map((value, index) => {
+      const x = data.length === 1 ? 0 : (index / (data.length - 1)) * 100;
+      const y = height - (value / max) * height;
+      return `${x},${y.toFixed(1)}`;
+    })
+    .join(" ");
+
+  return (
+    <svg className="line-series" viewBox={`0 0 100 ${height}`} preserveAspectRatio="none">
+      <polyline points={points} fill="none" stroke="#1d4ed8" strokeWidth="2" />
     </svg>
   );
 }

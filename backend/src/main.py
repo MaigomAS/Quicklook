@@ -5,11 +5,13 @@ import os
 import socket
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
 
 @dataclass
@@ -51,14 +53,25 @@ class AcquisitionState:
     stop_event: threading.Event = field(default_factory=threading.Event)
     lock: threading.Lock = field(default_factory=threading.Lock)
     window: AggregationWindow = field(init=False)
+    rate_history: Dict[int, deque] = field(default_factory=dict)
+    rate_history_t_end_us: deque = field(default_factory=deque)
 
     def __post_init__(self) -> None:
         self.window = AggregationWindow(window_s=self.window_s)
 
 
+class ConfigUpdateRequest(BaseModel):
+    window_s: Optional[int] = None
+    channels: Optional[int] = None
+
+
 MODE_LIVE = "live"
 MODE_RECORD = "record"
 MODE_REPLAY = "replay"
+MAX_CHANNELS = 64
+MIN_CHANNELS = 1
+MIN_WINDOW_S = 1
+MAX_WINDOW_S = 3600
 
 
 def adc_to_bin(adc: int) -> int:
@@ -66,24 +79,47 @@ def adc_to_bin(adc: int) -> int:
     return min(63, adc // 64)
 
 
-def empty_snapshot(window_s: int) -> dict:
+def empty_snapshot(window_s: int, channels: int) -> dict:
+    channel_ids = list(range(channels))
     return {
         "window_s": window_s,
         "t_start_us": 0,
         "t_end_us": 0,
-        "channels": [],
-        "counts_by_channel": {},
-        "histograms": {"adc_x": {}, "adc_gtop": {}, "adc_gbot": {}},
+        "channels": channel_ids,
+        "counts_by_channel": {str(channel): 0 for channel in channel_ids},
+        "histograms": {
+            "adc_x": {str(channel): [0 for _ in range(64)] for channel in channel_ids},
+            "adc_gtop": {str(channel): [0 for _ in range(64)] for channel in channel_ids},
+            "adc_gbot": {str(channel): [0 for _ in range(64)] for channel in channel_ids},
+        },
         "ratemap_8x8": [[0.0 for _ in range(8)] for _ in range(8)],
+        "rate_history": {str(channel): [] for channel in channel_ids},
+        "rate_history_t_end_us": [],
         "notes": ["no data yet"],
     }
 
 
-def build_snapshot(window: AggregationWindow) -> dict:
-    channels = sorted(window.counts_by_channel.keys())
-    counts_by_channel = {str(k): v for k, v in window.counts_by_channel.items()}
+def build_snapshot(
+    window: AggregationWindow,
+    channels: int,
+    rate_history: Dict[int, deque],
+    rate_history_t_end_us: deque,
+) -> dict:
+    channel_ids = list(range(channels))
+    counts_by_channel = {
+        str(channel): window.counts_by_channel.get(channel, 0) for channel in channel_ids
+    }
 
     ratemap = [[0.0 for _ in range(8)] for _ in range(8)]
+    for ch, count in counts_by_channel.items():
+        channel = int(ch)
+        rate = count / float(window.window_s)
+        rate_history.setdefault(channel, deque(maxlen=30)).append(rate)
+
+    rate_history_t_end_us.append(window.t_end_us)
+    while len(rate_history_t_end_us) > 30:
+        rate_history_t_end_us.popleft()
+
     for ch, count in window.counts_by_channel.items():
         row = ch // 8
         col = ch % 8
@@ -91,19 +127,32 @@ def build_snapshot(window: AggregationWindow) -> dict:
             ratemap[row][col] = count / float(window.window_s)
 
     histograms = {
-        "adc_x": {str(k): v for k, v in window.hist_adc_x.items()},
-        "adc_gtop": {str(k): v for k, v in window.hist_adc_gtop.items()},
-        "adc_gbot": {str(k): v for k, v in window.hist_adc_gbot.items()},
+        "adc_x": {
+            str(channel): window.hist_adc_x.get(channel, [0 for _ in range(64)])
+            for channel in channel_ids
+        },
+        "adc_gtop": {
+            str(channel): window.hist_adc_gtop.get(channel, [0 for _ in range(64)])
+            for channel in channel_ids
+        },
+        "adc_gbot": {
+            str(channel): window.hist_adc_gbot.get(channel, [0 for _ in range(64)])
+            for channel in channel_ids
+        },
     }
 
     return {
         "window_s": window.window_s,
         "t_start_us": window.t_start_us,
         "t_end_us": window.t_end_us,
-        "channels": channels,
+        "channels": channel_ids,
         "counts_by_channel": counts_by_channel,
         "histograms": histograms,
         "ratemap_8x8": ratemap,
+        "rate_history": {
+            str(channel): list(rate_history.get(channel, deque())) for channel in channel_ids
+        },
+        "rate_history_t_end_us": list(rate_history_t_end_us),
         "notes": window.notes,
     }
 
@@ -132,7 +181,12 @@ def process_event(state: AcquisitionState, event: dict) -> None:
         ensure_hist(state.window.hist_adc_gbot, channel)[adc_to_bin(adc_gbot)] += 1
 
         if state.window.t_end_us - state.window.t_start_us >= state.window.window_s * 1_000_000:
-            state.latest_snapshot = build_snapshot(state.window)
+            state.latest_snapshot = build_snapshot(
+                state.window,
+                state.channels,
+                state.rate_history,
+                state.rate_history_t_end_us,
+            )
             state.window.reset()
 
 
@@ -189,6 +243,8 @@ def run_acquisition(state: AcquisitionState) -> None:
     state.stop_event.clear()
     state.last_error = None
     state.window.reset()
+    state.rate_history = {}
+    state.rate_history_t_end_us = deque(maxlen=30)
     try:
         if state.mode == MODE_REPLAY:
             run_replay(state)
@@ -210,7 +266,12 @@ def run_acquisition(state: AcquisitionState) -> None:
         state.connected = False
         with state.lock:
             if state.window.t_start_us != 0:
-                state.latest_snapshot = build_snapshot(state.window)
+                state.latest_snapshot = build_snapshot(
+                    state.window,
+                    state.channels,
+                    state.rate_history,
+                    state.rate_history_t_end_us,
+                )
             state.window.reset()
         state.running = False
 
@@ -234,7 +295,7 @@ state = AcquisitionState(
     sim_host=os.getenv("SIM_HOST", "127.0.0.1"),
     sim_port=int(os.getenv("SIM_PORT", "9001")),
     window_s=int(os.getenv("WINDOW_S", "10")),
-    channels=int(os.getenv("CHANNELS", "4")),
+    channels=int(os.getenv("CHANNELS", "64")),
     mode=os.getenv("QUICKLOOK_MODE", MODE_LIVE),
     record_path=os.getenv("QUICKLOOK_RECORD_PATH"),
     replay_path=os.getenv("QUICKLOOK_REPLAY_PATH"),
@@ -281,7 +342,7 @@ def get_snapshot() -> dict:
     with state.lock:
         if state.latest_snapshot:
             return state.latest_snapshot
-    return empty_snapshot(state.window_s)
+    return empty_snapshot(state.window_s, state.channels)
 
 
 @app.get("/config")
@@ -295,4 +356,48 @@ def get_config() -> dict:
         "record_path": state.record_path,
         "replay_path": state.replay_path,
         "replay_speed": state.replay_speed,
+        "limits": {
+            "min_window_s": MIN_WINDOW_S,
+            "max_window_s": MAX_WINDOW_S,
+            "min_channels": MIN_CHANNELS,
+            "max_channels": MAX_CHANNELS,
+        },
+    }
+
+
+@app.post("/config")
+def update_config(request: ConfigUpdateRequest) -> dict:
+    if state.running:
+        raise HTTPException(status_code=409, detail="stop acquisition before updating config")
+
+    if request.window_s is None and request.channels is None:
+        raise HTTPException(status_code=400, detail="no settings provided")
+
+    next_window_s = state.window_s if request.window_s is None else request.window_s
+    next_channels = state.channels if request.channels is None else request.channels
+
+    if next_window_s < MIN_WINDOW_S or next_window_s > MAX_WINDOW_S:
+        raise HTTPException(
+            status_code=422,
+            detail=f"window_s must be between {MIN_WINDOW_S} and {MAX_WINDOW_S}",
+        )
+    if next_channels < MIN_CHANNELS or next_channels > MAX_CHANNELS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"channels must be between {MIN_CHANNELS} and {MAX_CHANNELS}",
+        )
+
+    with state.lock:
+        state.window_s = next_window_s
+        state.channels = next_channels
+        state.window.window_s = next_window_s
+        state.window.reset()
+        state.latest_snapshot = empty_snapshot(state.window_s, state.channels)
+        state.rate_history = {}
+        state.rate_history_t_end_us = deque(maxlen=30)
+
+    return {
+        "ok": True,
+        "window_s": state.window_s,
+        "channels": state.channels,
     }
