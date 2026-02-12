@@ -60,9 +60,6 @@ class AcquisitionState:
             "invalid_json": 0,
             "invalid_channel": 0,
             "invalid_fields": 0,
-            "invalid_json_lines": 0,
-            "invalid_channel_id": 0,
-            "invalid_timestamp_or_fields": 0,
         }
     )
 
@@ -109,9 +106,6 @@ def empty_snapshot(window_s: int, channels: int) -> dict:
             "invalid_json": 0,
             "invalid_channel": 0,
             "invalid_fields": 0,
-            "invalid_json_lines": 0,
-            "invalid_channel_id": 0,
-            "invalid_timestamp_or_fields": 0,
         },
         "notes": ["no data yet"],
     }
@@ -198,11 +192,11 @@ def process_event(state: AcquisitionState, event: dict) -> None:
     with state.lock:
         if t_us <= 0:
             state.quality["invalid_fields"] += 1
-            state.quality["invalid_timestamp_or_fields"] += 1
+            state.quality["invalid_fields"] += 1
             return
         if channel < 0 or channel >= state.channels:
             state.quality["invalid_channel"] += 1
-            state.quality["invalid_channel_id"] += 1
+            state.quality["invalid_channel"] += 1
             return
 
         if state.window.t_start_us == 0:
@@ -243,7 +237,7 @@ def run_live(state: AcquisitionState, record_fp: Optional[object]) -> None:
             except json.JSONDecodeError:
                 with state.lock:
                     state.quality["invalid_json"] += 1
-                    state.quality["invalid_json_lines"] += 1
+                    state.quality["invalid_json"] += 1
                 continue
             process_event(state, event)
 
@@ -266,7 +260,7 @@ def run_replay(state: AcquisitionState) -> None:
             except json.JSONDecodeError:
                 with state.lock:
                     state.quality["invalid_json"] += 1
-                    state.quality["invalid_json_lines"] += 1
+                    state.quality["invalid_json"] += 1
                 continue
             t_us = int(event.get("t_us", 0))
             if last_t_us is not None:
@@ -289,9 +283,6 @@ def run_acquisition(state: AcquisitionState) -> None:
         "invalid_json": 0,
         "invalid_channel": 0,
         "invalid_fields": 0,
-        "invalid_json_lines": 0,
-        "invalid_channel_id": 0,
-        "invalid_timestamp_or_fields": 0,
     }
     try:
         if state.mode == MODE_REPLAY:
