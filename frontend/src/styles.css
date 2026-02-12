@@ -169,6 +169,62 @@ body {
   color: #334155;
 }
 
+.label-with-help {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.help-tooltip-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.help-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1px solid #94a3b8;
+  color: #475569;
+  font-size: 11px;
+  cursor: help;
+  background: #f8fafc;
+}
+
+.help-tooltip {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  width: 320px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #0f172a;
+  color: #f8fafc;
+  font-size: 11px;
+  line-height: 1.4;
+  box-shadow: 0 10px 18px rgba(15, 23, 42, 0.25);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.help-tooltip-wrap:hover .help-tooltip,
+.help-tooltip-wrap:focus-within .help-tooltip {
+  opacity: 1;
+  visibility: visible;
+}
+
+.input-helper {
+  margin-top: -2px;
+  font-size: 11px;
+  color: #64748b;
+  line-height: 1.35;
+}
+
 .settings-grid input {
   border: 1px solid #cbd5e1;
   border-radius: 8px;
