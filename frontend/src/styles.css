@@ -289,6 +289,8 @@ h2 {
   font-size: 9px;
   color: #0f172a;
   font-weight: 600;
+  cursor: pointer;
+  padding: 0;
 }
 
 .color-bar {
@@ -419,36 +421,76 @@ h2 {
   height: 100%;
 }
 
-.modal {
+.channel-modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(15, 23, 42, 0.75);
+  background: rgba(15, 23, 42, 0.62);
+  backdrop-filter: blur(3px);
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 24px;
+  padding: 18px;
+  z-index: 1200;
 }
 
-.modal-content {
-  background: white;
+.channel-modal {
+  background: #fff;
   border-radius: 16px;
-  padding: 24px;
-  max-width: 820px;
-  width: 100%;
-  position: relative;
   border: 1px solid rgba(148, 163, 184, 0.2);
+  width: min(1100px, 100%);
+  max-height: calc(100vh - 40px);
+  overflow: auto;
+  padding: 18px;
+  position: relative;
 }
 
-.close {
+.channel-modal-close {
   position: absolute;
-  top: 12px;
-  right: 12px;
+  top: 10px;
+  right: 10px;
   border: none;
   background: #e2e8f0;
   border-radius: 50%;
   width: 32px;
   height: 32px;
   cursor: pointer;
+}
+
+.channel-modal-header h3 {
+  margin: 0;
+}
+
+.channel-modal-header p {
+  margin: 6px 0 0;
+  color: var(--ql-text-muted);
+  font-size: 13px;
+}
+
+.channel-modal-empty {
+  display: inline-block;
+  margin-top: 8px;
+  color: #b45309;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.channel-modal-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.channel-modal-plot {
+  border: 1px solid var(--ql-border);
+  border-radius: 10px;
+  padding: 8px;
+  background: #f8fafc;
+}
+
+.channel-modal-plot h4 {
+  margin: 0 0 6px;
+  font-size: 14px;
 }
 
 @media (max-width: 1100px) {
@@ -488,5 +530,9 @@ h2 {
 
   .inline-settings {
     width: 100%;
+  }
+
+  .channel-modal-grid {
+    grid-template-columns: 1fr;
   }
 }
