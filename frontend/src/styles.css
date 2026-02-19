@@ -289,6 +289,13 @@ h2 {
   font-size: 9px;
   color: #0f172a;
   font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+  font: inherit;
+}
+
+.heat-cell:hover {
+  outline: 2px solid rgba(15, 23, 42, 0.3);
 }
 
 .color-bar {
@@ -325,6 +332,24 @@ h2 {
   height: 28px;
   background: var(--ql-accent);
   color: white;
+  cursor: pointer;
+}
+
+.recent-indicator {
+  margin-top: 4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--ql-text-muted);
+}
+
+.recent-indicator button {
+  border: 1px solid var(--ql-border);
+  border-radius: 999px;
+  background: #f8fafc;
+  color: #334155;
+  padding: 2px 8px;
   cursor: pointer;
 }
 

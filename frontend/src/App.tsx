@@ -202,7 +202,8 @@ function App() {
   const [lastStatusAt, setLastStatusAt] = useState<Date | null>(null);
   const [lastSnapshotAt, setLastSnapshotAt] = useState<Date | null>(null);
   const [selectedPlot, setSelectedPlot] = useState<PlotSelection>(null);
-  const [histOffset, setHistOffset] = useState(0);
+  const [recentChannels, setRecentChannels] = useState<number[]>([]);
+  const [pageIndex, setPageIndex] = useState(0);
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [savingSettings, setSavingSettings] = useState(false);
   const [settings, setSettings] = useState<BackendConfig>({
@@ -290,14 +291,27 @@ function App() {
   const heatMin = Math.min(...snapshot.ratemap_8x8.flat());
 
   const histogramPageSize = 4;
-  const maxHistOffset = Math.max(0, channels.length - histogramPageSize);
-  const visibleHistogramChannels = channels.slice(histOffset, histOffset + histogramPageSize);
+  const orderedChannels = useMemo(() => {
+    const recentSet = new Set(recentChannels);
+    return [...recentChannels, ...channels.filter((channel) => !recentSet.has(channel))];
+  }, [channels, recentChannels]);
+  const maxPageIndex = Math.max(0, Math.ceil(orderedChannels.length / histogramPageSize) - 1);
+  const pageStart = pageIndex * histogramPageSize;
+  const visibleHistogramChannels = orderedChannels.slice(pageStart, pageStart + histogramPageSize);
+
+  const addRecentChannel = (channel: number) => {
+    setRecentChannels((prev) => {
+      const deduped = prev.filter((item) => item !== channel);
+      return [channel, ...deduped].slice(0, histogramPageSize);
+    });
+    setPageIndex(0);
+  };
 
   useEffect(() => {
-    if (histOffset > maxHistOffset) {
-      setHistOffset(maxHistOffset);
+    if (pageIndex > maxPageIndex) {
+      setPageIndex(maxPageIndex);
     }
-  }, [histOffset, maxHistOffset]);
+  }, [maxPageIndex, pageIndex]);
 
   const startAcq = () => fetch(`${backendUrl}/start`, { method: "POST" });
   const stopAcq = () => fetch(`${backendUrl}/stop`, { method: "POST" });
@@ -326,7 +340,7 @@ function App() {
       }));
       const freshSnapshot = await fetch(`${backendUrl}/snapshot`).then((res) => res.json());
       setSnapshot(normalizeSnapshot(freshSnapshot));
-      setHistOffset(0);
+      setPageIndex(0);
     } catch {
       setSettingsError("Failed to save settings");
     } finally {
@@ -417,7 +431,19 @@ function App() {
               <p className="subtitle">8×8 channels · Aggregation Window: {snapshot.window_s}s</p>
             </div>
           </div>
-          <RateMapPanel ratemap={snapshot.ratemap_8x8} heatMin={heatMin} heatMax={heatMax} />
+          <RateMapPanel
+            ratemap={snapshot.ratemap_8x8}
+            heatMin={heatMin}
+            heatMax={heatMax}
+            onChannelClick={(channel) => {
+              addRecentChannel(channel);
+              setSelectedPlot({
+                title: `Channel ${channel} · Instant rate history`,
+                kind: "line",
+                data: snapshot.rate_history[String(channel)] ?? [],
+              });
+            }}
+          />
         </section>
 
         <section className="panel histograms-panel">
@@ -428,19 +454,31 @@ function App() {
                 4 channels view · Aggregation Window: {snapshot.window_s}s · {snapshot.t_start_us} →{" "}
                 {snapshot.t_end_us} μs
               </p>
+              {recentChannels.length > 0 ? (
+                <div className="recent-indicator">
+                  <span>Showing recent selections</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRecentChannels([]);
+                      setPageIndex(0);
+                    }}
+                  >
+                    Clear
+                  </button>
+                </div>
+              ) : null}
             </div>
             <div className="channel-nav">
-              <button type="button" onClick={() => setHistOffset((prev) => Math.max(0, prev - histogramPageSize))}>
+              <button type="button" onClick={() => setPageIndex((prev) => Math.max(0, prev - 1))}>
                 ↑
               </button>
               <span>
-                {histOffset + 1}-{Math.min(histOffset + histogramPageSize, channels.length)} / {channels.length}
+                {pageStart + 1}-{Math.min(pageStart + histogramPageSize, orderedChannels.length)} / {orderedChannels.length}
               </span>
               <button
                 type="button"
-                onClick={() =>
-                  setHistOffset((prev) => Math.min(maxHistOffset, prev + histogramPageSize))
-                }
+                onClick={() => setPageIndex((prev) => Math.min(maxPageIndex, prev + 1))}
               >
                 ↓
               </button>
@@ -467,9 +505,10 @@ function App() {
                         key={`${ch}-${stream.key}`}
                         type="button"
                         className="mini-plot"
-                        onClick={() =>
-                          setSelectedPlot({ title: `Channel ${ch} · ${stream.label}`, kind: "histogram", data })
-                        }
+                        onClick={() => {
+                          addRecentChannel(ch);
+                          setSelectedPlot({ title: `Channel ${ch} · ${stream.label}`, kind: "histogram", data });
+                        }}
                       >
                         <MiniPlotChart
                           kind="histogram"
@@ -483,13 +522,14 @@ function App() {
                   <button
                     type="button"
                     className="mini-plot"
-                    onClick={() =>
+                    onClick={() => {
+                      addRecentChannel(ch);
                       setSelectedPlot({
                         title: `Channel ${ch} · Instant rate history`,
                         kind: "line",
                         data: snapshot.rate_history[String(ch)] ?? [],
-                      })
-                    }
+                      });
+                    }}
                   >
                     <MiniPlotChart
                       kind="line"
@@ -525,7 +565,17 @@ function App() {
   );
 }
 
-function RateMapPanel({ ratemap, heatMin, heatMax }: { ratemap: number[][]; heatMin: number; heatMax: number }) {
+function RateMapPanel({
+  ratemap,
+  heatMin,
+  heatMax,
+  onChannelClick,
+}: {
+  ratemap: number[][];
+  heatMin: number;
+  heatMax: number;
+  onChannelClick: (channel: number) => void;
+}) {
   const containerRef = useRef<HTMLDivElement>(null);
   const size = useElementSize(containerRef);
 
@@ -550,15 +600,18 @@ function RateMapPanel({ ratemap, heatMin, heatMax }: { ratemap: number[][]; heat
           {ratemap.map((row, rowIndex) =>
             row.map((value, colIndex) => {
               const color = hotColorScale(value, heatMin, heatMax);
+              const channel = rowIndex * 8 + colIndex;
               return (
-                <div
+                <button
                   key={`${rowIndex}-${colIndex}`}
                   className="heat-cell"
                   style={{ backgroundColor: color }}
-                  title={`ch ${rowIndex * 8 + colIndex}: ${value.toFixed(2)} Hz`}
+                  title={`ch ${channel}: ${value.toFixed(2)} Hz`}
+                  type="button"
+                  onClick={() => onChannelClick(channel)}
                 >
-                  {rowIndex * 8 + colIndex}
-                </div>
+                  {channel}
+                </button>
               );
             })
           )}
