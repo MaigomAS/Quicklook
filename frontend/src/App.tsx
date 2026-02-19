@@ -484,40 +484,54 @@ function App() {
             <span>adc_gbot</span>
             <span>rate vs time</span>
           </div>
+          <p className="plot-caption">Y: Counts (per window) • X: ADC units • Trend: Rate (Hz) vs Time (windows)</p>
           <div className="hist-table">
-            {visibleHistogramChannels.map((ch) => (
-              <div key={ch} className="hist-row hist-row-compact">
-                <div className="channel-label">ch {ch}</div>
-                {histogramStreams.map((stream) => {
-                  const data = snapshot.histograms[stream.key][String(ch)] || Array(64).fill(0);
-                  return (
-                    <button
-                      key={`${ch}-${stream.key}`}
-                      type="button"
-                      className="mini-plot"
-                      onClick={() =>
-                        setSelectedPlot({ title: `Channel ${ch} · ${stream.label}`, kind: "histogram", data })
-                      }
-                    >
-                      <Histogram data={data} height={70} />
-                    </button>
-                  );
-                })}
-                <button
-                  type="button"
-                  className="mini-plot"
-                  onClick={() =>
-                    setSelectedPlot({
-                      title: `Channel ${ch} · Instant rate history`,
-                      kind: "line",
-                      data: snapshot.rate_history[String(ch)] ?? [],
-                    })
-                  }
-                >
-                  <LineSeries data={snapshot.rate_history[String(ch)] ?? []} height={70} />
-                </button>
-              </div>
-            ))}
+            {visibleHistogramChannels.map((ch, rowIndex) => {
+              const isLastRow = rowIndex === visibleHistogramChannels.length - 1;
+              return (
+                <div key={ch} className="hist-row hist-row-compact">
+                  <div className="channel-label">ch {ch}</div>
+                  {histogramStreams.map((stream, streamIndex) => {
+                    const data = snapshot.histograms[stream.key][String(ch)] || Array(64).fill(0);
+                    return (
+                      <button
+                        key={`${ch}-${stream.key}`}
+                        type="button"
+                        className="mini-plot"
+                        onClick={() =>
+                          setSelectedPlot({ title: `Channel ${ch} · ${stream.label}`, kind: "histogram", data })
+                        }
+                      >
+                        <Histogram
+                          data={data}
+                          height={70}
+                          showXAxisLabel={isLastRow}
+                          showYAxisLabel={streamIndex === 0}
+                        />
+                      </button>
+                    );
+                  })}
+                  <button
+                    type="button"
+                    className="mini-plot"
+                    onClick={() =>
+                      setSelectedPlot({
+                        title: `Channel ${ch} · Instant rate history`,
+                        kind: "line",
+                        data: snapshot.rate_history[String(ch)] ?? [],
+                      })
+                    }
+                  >
+                    <LineSeries
+                      data={snapshot.rate_history[String(ch)] ?? []}
+                      height={70}
+                      showXAxisLabel={isLastRow}
+                      showYAxisLabel={rowIndex === 0}
+                    />
+                  </button>
+                </div>
+              );
+            })}
           </div>
         </section>
 
@@ -550,7 +564,21 @@ function App() {
   );
 }
 
-function Histogram({ data, height }: { data: number[]; height: number }) {
+function Histogram({
+  data,
+  height,
+  showXAxisLabel = true,
+  showYAxisLabel = true,
+  showXTicks = true,
+  showYTicks = true,
+}: {
+  data: number[];
+  height: number;
+  showXAxisLabel?: boolean;
+  showYAxisLabel?: boolean;
+  showXTicks?: boolean;
+  showYTicks?: boolean;
+}) {
   const max = Math.max(1, ...data);
   const width = Math.max(data.length, 64);
   const margin = { top: 8, right: 6, bottom: 24, left: 28 };
@@ -582,40 +610,62 @@ function Histogram({ data, height }: { data: number[]; height: number }) {
       })}
       <line x1={margin.left} y1={margin.top + innerHeight} x2={width - margin.right} y2={margin.top + innerHeight} className="plot-axis" />
       <line x1={margin.left} y1={margin.top} x2={margin.left} y2={margin.top + innerHeight} className="plot-axis" />
-      {yTicks.map((tick) => {
-        const y = margin.top + innerHeight - (tick / max) * innerHeight;
-        return (
-          <g key={`yt-${tick}`}>
-            <line x1={margin.left - 3} x2={margin.left} y1={y} y2={y} className="plot-axis" />
-            <text x={margin.left - 4} y={y + 3} textAnchor="end" className="plot-tick-label">
-              {formatAxisTick(tick)}
-            </text>
-          </g>
-        );
-      })}
-      {xTicks.map((tick) => {
-        const ratio = data.length <= 1 ? 0 : tick / (data.length - 1);
-        const x = margin.left + ratio * innerWidth;
-        return (
-          <g key={`xt-${tick}`}>
-            <line x1={x} x2={x} y1={margin.top + innerHeight} y2={margin.top + innerHeight + 3} className="plot-axis" />
-            <text x={x} y={height - 12} textAnchor="middle" className="plot-tick-label">
-              {Math.round(tick)}
-            </text>
-          </g>
-        );
-      })}
-      <text x={width / 2} y={height - 2} textAnchor="middle" className="plot-axis-label">
-        ADC units
-      </text>
-      <text x={8} y={margin.top + innerHeight / 2} textAnchor="middle" className="plot-axis-label" transform={`rotate(-90, 8, ${margin.top + innerHeight / 2})`}>
-        Counts
-      </text>
+      {showYTicks
+        ? yTicks.map((tick) => {
+            const y = margin.top + innerHeight - (tick / max) * innerHeight;
+            return (
+              <g key={`yt-${tick}`}>
+                <line x1={margin.left - 3} x2={margin.left} y1={y} y2={y} className="plot-axis" />
+                <text x={margin.left - 4} y={y + 2} textAnchor="end" className="plot-tick-label">
+                  {formatAxisTick(tick)}
+                </text>
+              </g>
+            );
+          })
+        : null}
+      {showXTicks
+        ? xTicks.map((tick) => {
+            const ratio = data.length <= 1 ? 0 : tick / (data.length - 1);
+            const x = margin.left + ratio * innerWidth;
+            return (
+              <g key={`xt-${tick}`}>
+                <line x1={x} x2={x} y1={margin.top + innerHeight} y2={margin.top + innerHeight + 2.5} className="plot-axis" />
+                <text x={x} y={height - 10} textAnchor="middle" className="plot-tick-label">
+                  {Math.round(tick)}
+                </text>
+              </g>
+            );
+          })
+        : null}
+      {showXAxisLabel ? (
+        <text x={width / 2} y={height - 1.5} textAnchor="middle" className="plot-axis-label">
+          ADC units
+        </text>
+      ) : null}
+      {showYAxisLabel ? (
+        <text x={margin.left + 1} y={margin.top + 4} textAnchor="start" className="plot-axis-label">
+          Counts
+        </text>
+      ) : null}
     </svg>
   );
 }
 
-function LineSeries({ data, height }: { data: number[]; height: number }) {
+function LineSeries({
+  data,
+  height,
+  showXAxisLabel = true,
+  showYAxisLabel = true,
+  showXTicks = true,
+  showYTicks = true,
+}: {
+  data: number[];
+  height: number;
+  showXAxisLabel?: boolean;
+  showYAxisLabel?: boolean;
+  showXTicks?: boolean;
+  showYTicks?: boolean;
+}) {
   if (data.length === 0) {
     return <div className="line-empty">no points yet</div>;
   }
@@ -644,35 +694,43 @@ function LineSeries({ data, height }: { data: number[]; height: number }) {
       <line x1={margin.left} y1={margin.top + innerHeight} x2={width - margin.right} y2={margin.top + innerHeight} className="plot-axis" />
       <line x1={margin.left} y1={margin.top} x2={margin.left} y2={margin.top + innerHeight} className="plot-axis" />
       <polyline points={points} fill="none" stroke="#1d4ed8" strokeWidth="2" />
-      {yTicks.map((tick) => {
-        const y = margin.top + innerHeight - (tick / max) * innerHeight;
-        return (
-          <g key={`line-yt-${tick}`}>
-            <line x1={margin.left - 3} x2={margin.left} y1={y} y2={y} className="plot-axis" />
-            <text x={margin.left - 4} y={y + 3} textAnchor="end" className="plot-tick-label">
-              {formatAxisTick(tick)}
-            </text>
-          </g>
-        );
-      })}
-      {xTicks.map((tick) => {
-        const ratio = data.length <= 1 ? 0 : tick / (data.length - 1);
-        const x = margin.left + ratio * innerWidth;
-        return (
-          <g key={`line-xt-${tick}`}>
-            <line x1={x} x2={x} y1={margin.top + innerHeight} y2={margin.top + innerHeight + 3} className="plot-axis" />
-            <text x={x} y={height - 12} textAnchor="middle" className="plot-tick-label">
-              {Math.round(tick)}
-            </text>
-          </g>
-        );
-      })}
-      <text x={width / 2} y={height - 2} textAnchor="middle" className="plot-axis-label">
-        Time (windows)
-      </text>
-      <text x={8} y={margin.top + innerHeight / 2} textAnchor="middle" className="plot-axis-label" transform={`rotate(-90, 8, ${margin.top + innerHeight / 2})`}>
-        Rate (Hz)
-      </text>
+      {showYTicks
+        ? yTicks.map((tick) => {
+            const y = margin.top + innerHeight - (tick / max) * innerHeight;
+            return (
+              <g key={`line-yt-${tick}`}>
+                <line x1={margin.left - 3} x2={margin.left} y1={y} y2={y} className="plot-axis" />
+                <text x={margin.left - 4} y={y + 2} textAnchor="end" className="plot-tick-label">
+                  {formatAxisTick(tick)}
+                </text>
+              </g>
+            );
+          })
+        : null}
+      {showXTicks
+        ? xTicks.map((tick) => {
+            const ratio = data.length <= 1 ? 0 : tick / (data.length - 1);
+            const x = margin.left + ratio * innerWidth;
+            return (
+              <g key={`line-xt-${tick}`}>
+                <line x1={x} x2={x} y1={margin.top + innerHeight} y2={margin.top + innerHeight + 2.5} className="plot-axis" />
+                <text x={x} y={height - 10} textAnchor="middle" className="plot-tick-label">
+                  {Math.round(tick)}
+                </text>
+              </g>
+            );
+          })
+        : null}
+      {showXAxisLabel ? (
+        <text x={width / 2} y={height - 1.5} textAnchor="middle" className="plot-axis-label">
+          Time (windows)
+        </text>
+      ) : null}
+      {showYAxisLabel ? (
+        <text x={margin.left + 1} y={margin.top + 4} textAnchor="start" className="plot-axis-label">
+          Rate (Hz)
+        </text>
+      ) : null}
     </svg>
   );
 }

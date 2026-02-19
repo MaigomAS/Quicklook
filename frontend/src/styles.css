@@ -359,8 +359,15 @@ body {
   min-height: 86px;
 }
 
+
+.plot-caption {
+  margin: 6px 0 2px;
+  font-size: 11px;
+  color: #64748b;
+}
+
 .hist-table {
-  margin-top: 8px;
+  margin-top: 6px;
   display: grid;
   gap: 8px;
 }
@@ -402,12 +409,12 @@ body {
 }
 
 .plot-tick-label {
-  font-size: 3.3px;
+  font-size: 2.5px;
   fill: #334155;
 }
 
 .plot-axis-label {
-  font-size: 3.6px;
+  font-size: 2.8px;
   fill: #0f172a;
   font-weight: 600;
 }
