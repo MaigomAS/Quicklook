@@ -315,6 +315,24 @@ h2 {
   gap: 8px;
 }
 
+.recency-indicator {
+  margin-top: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--ql-text-muted);
+}
+
+.recency-indicator button {
+  border: 1px solid var(--ql-border);
+  border-radius: 999px;
+  background: #f8fafc;
+  color: #1e293b;
+  padding: 2px 10px;
+  cursor: pointer;
+}
+
 .channel-nav span {
   font-size: 12px;
   color: var(--ql-text-muted);

@@ -177,7 +177,8 @@ function App() {
   const [lastSnapshotAt, setLastSnapshotAt] = useState<Date | null>(null);
   const [selectedChannel, setSelectedChannel] = useState<number | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
-  const [histOffset, setHistOffset] = useState(0);
+  const [recentChannels, setRecentChannels] = useState<number[]>([]);
+  const [pageIndex, setPageIndex] = useState(0);
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [savingSettings, setSavingSettings] = useState(false);
   const [settings, setSettings] = useState<BackendConfig>({
@@ -255,18 +256,38 @@ function App() {
   const heatMin = Math.min(...snapshot.ratemap_8x8.flat());
 
   const histogramPageSize = 4;
-  const maxHistOffset = Math.max(0, channels.length - histogramPageSize);
-  const visibleHistogramChannels = channels.slice(histOffset, histOffset + histogramPageSize);
+  const orderedChannels = useMemo(() => {
+    const recentSet = new Set(recentChannels);
+    return [...recentChannels, ...channels.filter((channel) => !recentSet.has(channel))];
+  }, [channels, recentChannels]);
+  const maxPageIndex = Math.max(0, Math.ceil(orderedChannels.length / histogramPageSize) - 1);
+  const startIndex = pageIndex * histogramPageSize;
+  const visibleHistogramChannels = orderedChannels.slice(startIndex, startIndex + histogramPageSize);
 
   useEffect(() => {
-    if (histOffset > maxHistOffset) {
-      setHistOffset(maxHistOffset);
+    if (pageIndex > maxPageIndex) {
+      setPageIndex(maxPageIndex);
     }
-  }, [histOffset, maxHistOffset]);
+  }, [maxPageIndex, pageIndex]);
+
+  const updateRecentChannels = (channelNumber: number) => {
+    setRecentChannels((prev) => [channelNumber, ...prev.filter((channel) => channel !== channelNumber)].slice(0, 4));
+    setPageIndex(0);
+  };
 
   const openModal = (channelNumber: number) => {
     setSelectedChannel(channelNumber);
     setModalOpen(true);
+  };
+
+  const onRateMapSelectChannel = (channelNumber: number) => {
+    updateRecentChannels(channelNumber);
+    openModal(channelNumber);
+  };
+
+  const clearRecentChannels = () => {
+    setRecentChannels([]);
+    setPageIndex(0);
   };
 
   const closeModal = () => {
@@ -305,7 +326,7 @@ function App() {
       }));
       const freshSnapshot = await fetch(`${backendUrl}/snapshot`).then((res) => res.json());
       setSnapshot(normalizeSnapshot(freshSnapshot));
-      setHistOffset(0);
+      setPageIndex(0);
     } catch {
       setSettingsError("Failed to save settings");
     } finally {
@@ -400,7 +421,7 @@ function App() {
             ratemap={snapshot.ratemap_8x8}
             heatMin={heatMin}
             heatMax={heatMax}
-            onSelectChannel={openModal}
+            onSelectChannel={onRateMapSelectChannel}
           />
         </section>
 
@@ -412,19 +433,25 @@ function App() {
                 4 channels view · Aggregation Window: {snapshot.window_s}s · {snapshot.t_start_us} →{" "}
                 {snapshot.t_end_us} μs
               </p>
+              {recentChannels.length > 0 ? (
+                <div className="recency-indicator">
+                  <span>Showing recent selections</span>
+                  <button type="button" onClick={clearRecentChannels}>
+                    Clear
+                  </button>
+                </div>
+              ) : null}
             </div>
             <div className="channel-nav">
-              <button type="button" onClick={() => setHistOffset((prev) => Math.max(0, prev - histogramPageSize))}>
+              <button type="button" onClick={() => setPageIndex((prev) => Math.max(0, prev - 1))}>
                 ↑
               </button>
               <span>
-                {histOffset + 1}-{Math.min(histOffset + histogramPageSize, channels.length)} / {channels.length}
+                {startIndex + 1}-{Math.min(startIndex + histogramPageSize, orderedChannels.length)} / {orderedChannels.length}
               </span>
               <button
                 type="button"
-                onClick={() =>
-                  setHistOffset((prev) => Math.min(maxHistOffset, prev + histogramPageSize))
-                }
+                onClick={() => setPageIndex((prev) => Math.min(maxPageIndex, prev + 1))}
               >
                 ↓
               </button>
@@ -451,7 +478,10 @@ function App() {
                         key={`${ch}-${stream.key}`}
                         type="button"
                         className="mini-plot"
-                        onClick={() => openModal(ch)}
+                        onClick={() => {
+                          updateRecentChannels(ch);
+                          openModal(ch);
+                        }}
                       >
                         <MiniPlotChart
                           kind="histogram"
@@ -465,7 +495,10 @@ function App() {
                   <button
                     type="button"
                     className="mini-plot"
-                    onClick={() => openModal(ch)}
+                    onClick={() => {
+                      updateRecentChannels(ch);
+                      openModal(ch);
+                    }}
                   >
                     <MiniPlotChart
                       kind="line"
