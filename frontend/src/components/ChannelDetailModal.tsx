@@ -1,6 +1,7 @@
-import { useEffect } from "react";
+import { useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { Histogram, LineSeries } from "./Plots";
+import { useElementSize } from "./useElementSize";
 
 type Props = {
   open: boolean;
@@ -16,6 +17,32 @@ type Props = {
   hasData: boolean;
   onClose: () => void;
 };
+
+function PlotCard({
+  title,
+  type,
+  data,
+}: {
+  title: string;
+  type: "histogram" | "line";
+  data: number[];
+}) {
+  const chartRef = useRef<HTMLDivElement>(null);
+  const size = useElementSize(chartRef);
+
+  return (
+    <section className="channel-modal-plot">
+      <h4>{title}</h4>
+      <div ref={chartRef} className="channel-modal-chart-area">
+        {type === "histogram" ? (
+          <Histogram data={data} width={size.width} height={size.height} variant="modal" />
+        ) : (
+          <LineSeries data={data} width={size.width} height={size.height} variant="modal" />
+        )}
+      </div>
+    </section>
+  );
+}
 
 export function ChannelDetailModal({
   open,
@@ -54,30 +81,18 @@ export function ChannelDetailModal({
         <button className="channel-modal-close" onClick={onClose} aria-label="Close channel details">
           ✕
         </button>
-        <div className="channel-modal-header">
+        <header className="channel-modal-header">
           <h3>Channel ch {channel}</h3>
           <p>
             window: {windowS}s · {tStartUs} → {tEndUs} us · rate: {rateHz.toFixed(2)} Hz
           </p>
           {!hasData ? <span className="channel-modal-empty">No data for this channel in current window</span> : null}
-        </div>
+        </header>
         <div className="channel-modal-grid">
-          <div className="channel-modal-plot">
-            <h4>adc_x histogram</h4>
-            <Histogram data={adcX} height={280} />
-          </div>
-          <div className="channel-modal-plot">
-            <h4>adc_gtop histogram</h4>
-            <Histogram data={adcGtop} height={280} />
-          </div>
-          <div className="channel-modal-plot">
-            <h4>adc_gbot histogram</h4>
-            <Histogram data={adcGbot} height={280} />
-          </div>
-          <div className="channel-modal-plot">
-            <h4>rate vs time trend</h4>
-            <LineSeries data={rateTrend} height={280} />
-          </div>
+          <PlotCard title="adc_x histogram" type="histogram" data={adcX} />
+          <PlotCard title="adc_gtop histogram" type="histogram" data={adcGtop} />
+          <PlotCard title="adc_gbot histogram" type="histogram" data={adcGbot} />
+          <PlotCard title="rate vs time trend" type="line" data={rateTrend} />
         </div>
       </div>
     </div>,

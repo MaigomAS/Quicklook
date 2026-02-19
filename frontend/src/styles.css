@@ -429,7 +429,7 @@ h2 {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 18px;
+  padding: 16px;
   z-index: 1200;
 }
 
@@ -437,11 +437,14 @@ h2 {
   background: #fff;
   border-radius: 16px;
   border: 1px solid rgba(148, 163, 184, 0.2);
-  width: min(1100px, 100%);
-  max-height: calc(100vh - 40px);
-  overflow: auto;
-  padding: 18px;
+  width: min(1200px, 92vw);
+  height: min(820px, 90vh);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   position: relative;
+  box-shadow: 0 16px 36px rgba(15, 23, 42, 0.24);
 }
 
 .channel-modal-close {
@@ -456,6 +459,12 @@ h2 {
   cursor: pointer;
 }
 
+.channel-modal-header {
+  height: 72px;
+  flex: 0 0 72px;
+  padding-right: 40px;
+}
+
 .channel-modal-header h3 {
   margin: 0;
 }
@@ -468,17 +477,19 @@ h2 {
 
 .channel-modal-empty {
   display: inline-block;
-  margin-top: 8px;
+  margin-top: 6px;
   color: #b45309;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
 }
 
 .channel-modal-grid {
+  flex: 1;
+  min-height: 0;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
   gap: 12px;
-  margin-top: 14px;
 }
 
 .channel-modal-plot {
@@ -486,11 +497,22 @@ h2 {
   border-radius: 10px;
   padding: 8px;
   background: #f8fafc;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .channel-modal-plot h4 {
   margin: 0 0 6px;
-  font-size: 14px;
+  font-size: 13px;
+  line-height: 1.2;
+  color: #0f172a;
+}
+
+.channel-modal-chart-area {
+  flex: 1;
+  min-height: 0;
 }
 
 @media (max-width: 1100px) {
@@ -532,7 +554,20 @@ h2 {
     width: 100%;
   }
 
+  .channel-modal {
+    width: 94vw;
+    height: min(920px, 92vh);
+    overflow: auto;
+  }
+
+  .channel-modal-header {
+    height: auto;
+    flex: 0 0 auto;
+    margin-bottom: 8px;
+  }
+
   .channel-modal-grid {
     grid-template-columns: 1fr;
+    grid-template-rows: repeat(4, minmax(220px, 1fr));
   }
 }

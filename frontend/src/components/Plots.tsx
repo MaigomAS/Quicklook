@@ -1,6 +1,8 @@
 import { useRef } from "react";
 import { useElementSize } from "./useElementSize";
 
+type PlotVariant = "mini" | "modal";
+
 type SharedPlotProps = {
   data: number[];
   height?: number;
@@ -9,6 +11,7 @@ type SharedPlotProps = {
   showYAxisLabel?: boolean;
   showXTicks?: boolean;
   showYTicks?: boolean;
+  variant?: PlotVariant;
 };
 
 const makeLinearTicks = (min: number, max: number, count = 5) => {
@@ -34,6 +37,22 @@ const formatAxisTick = (value: number) => {
   return value.toFixed(2);
 };
 
+const getPlotMetrics = (chartWidth: number, chartHeight: number, variant: PlotVariant, showYTicks: boolean, showXTicksOrLabel: boolean) => {
+  if (variant === "modal") {
+    const left = showYTicks ? 48 : 12;
+    const bottom = showXTicksOrLabel ? 34 : 10;
+    const tickFont = 11;
+    const axisLabelFont = 12;
+    return { left, bottom, tickFont, axisLabelFont, top: 12, right: 12 };
+  }
+
+  const left = showYTicks ? Math.max(18, Math.min(28, chartWidth * 0.2)) : 8;
+  const bottom = showXTicksOrLabel ? Math.max(12, Math.min(20, chartHeight * 0.22)) : 7;
+  const tickFont = Math.max(5.5, Math.min(7.5, chartHeight * 0.09));
+  const axisLabelFont = tickFont + 0.6;
+  return { left, bottom, tickFont, axisLabelFont, top: 6, right: 4 };
+};
+
 export function MiniPlotChart({
   kind,
   data,
@@ -57,6 +76,7 @@ export function MiniPlotChart({
           height={size.height}
           showXAxisLabel={showXAxisLabel}
           showYAxisLabel={showYAxisLabel}
+          variant="mini"
         />
       ) : (
         <LineSeries
@@ -65,6 +85,7 @@ export function MiniPlotChart({
           height={size.height}
           showXAxisLabel={showXAxisLabel}
           showYAxisLabel={showYAxisLabel}
+          variant="mini"
         />
       )}
     </div>
@@ -79,37 +100,27 @@ export function Histogram({
   showYAxisLabel = true,
   showXTicks = true,
   showYTicks = true,
+  variant = "mini",
 }: SharedPlotProps) {
-  const max = Math.max(1, ...data);
-  const chartWidth = Math.max(60, width ?? Math.max(data.length, 64));
+  const safeData = data.length > 0 ? data : Array(64).fill(0);
+  const max = Math.max(1, ...safeData);
+  const chartWidth = Math.max(60, width ?? Math.max(safeData.length, 64));
   const chartHeight = Math.max(48, height);
-  const left = showYTicks ? Math.max(18, Math.min(28, chartWidth * 0.2)) : 8;
-  const bottom = showXTicks || showXAxisLabel ? Math.max(12, Math.min(20, chartHeight * 0.22)) : 7;
-  const margin = { top: 6, right: 4, bottom, left };
+  const metrics = getPlotMetrics(chartWidth, chartHeight, variant, showYTicks, showXTicks || showXAxisLabel);
+  const margin = { top: metrics.top, right: metrics.right, bottom: metrics.bottom, left: metrics.left };
   const innerWidth = Math.max(1, chartWidth - margin.left - margin.right);
   const innerHeight = Math.max(1, chartHeight - margin.top - margin.bottom);
-  const tickFont = Math.max(5.5, Math.min(7.5, chartHeight * 0.09));
-  const axisLabelFont = tickFont + 0.6;
   const yTicks = makeLinearTicks(0, max, 4);
-  const xTicks = makeLinearTicks(0, Math.max(0, data.length - 1), 5);
+  const xTicks = makeLinearTicks(0, Math.max(0, safeData.length - 1), 5);
 
   return (
     <svg className="histogram" viewBox={`0 0 ${chartWidth} ${chartHeight}`} preserveAspectRatio="none">
       {yTicks.map((tick) => {
         const y = margin.top + innerHeight - (tick / max) * innerHeight;
-        return (
-          <line
-            key={`grid-y-${tick}`}
-            x1={margin.left}
-            x2={chartWidth - margin.right}
-            y1={y}
-            y2={y}
-            className="plot-grid"
-          />
-        );
+        return <line key={`grid-y-${tick}`} x1={margin.left} x2={chartWidth - margin.right} y1={y} y2={y} className="plot-grid" />;
       })}
-      {data.map((value, index) => {
-        const barWidth = innerWidth / Math.max(1, data.length);
+      {safeData.map((value, index) => {
+        const barWidth = innerWidth / Math.max(1, safeData.length);
         const barHeight = (value / max) * innerHeight;
         const x = margin.left + index * barWidth + barWidth * 0.08;
         return (
@@ -119,25 +130,19 @@ export function Histogram({
             y={margin.top + innerHeight - barHeight}
             width={Math.max(0.6, barWidth * 0.84)}
             height={barHeight}
-            rx={0.5}
+            rx={variant === "modal" ? 1.2 : 0.5}
           />
         );
       })}
-      <line
-        x1={margin.left}
-        y1={margin.top + innerHeight}
-        x2={chartWidth - margin.right}
-        y2={margin.top + innerHeight}
-        className="plot-axis"
-      />
+      <line x1={margin.left} y1={margin.top + innerHeight} x2={chartWidth - margin.right} y2={margin.top + innerHeight} className="plot-axis" />
       <line x1={margin.left} y1={margin.top} x2={margin.left} y2={margin.top + innerHeight} className="plot-axis" />
       {showYTicks
         ? yTicks.map((tick) => {
             const y = margin.top + innerHeight - (tick / max) * innerHeight;
             return (
               <g key={`yt-${tick}`}>
-                <line x1={margin.left - 3} x2={margin.left} y1={y} y2={y} className="plot-axis" />
-                <text x={margin.left - 4} y={y + 2} textAnchor="end" className="plot-tick-label" style={{ fontSize: `${tickFont}px` }}>
+                <line x1={margin.left - 4} x2={margin.left} y1={y} y2={y} className="plot-axis" />
+                <text x={margin.left - 6} y={y + 4} textAnchor="end" className="plot-tick-label" style={{ fontSize: `${metrics.tickFont}px` }}>
                   {formatAxisTick(tick)}
                 </text>
               </g>
@@ -146,12 +151,12 @@ export function Histogram({
         : null}
       {showXTicks
         ? xTicks.map((tick) => {
-            const ratio = data.length <= 1 ? 0 : tick / (data.length - 1);
+            const ratio = safeData.length <= 1 ? 0 : tick / (safeData.length - 1);
             const x = margin.left + ratio * innerWidth;
             return (
               <g key={`xt-${tick}`}>
-                <line x1={x} x2={x} y1={margin.top + innerHeight} y2={margin.top + innerHeight + 2.5} className="plot-axis" />
-                <text x={x} y={chartHeight - 8} textAnchor="middle" className="plot-tick-label" style={{ fontSize: `${tickFont}px` }}>
+                <line x1={x} x2={x} y1={margin.top + innerHeight} y2={margin.top + innerHeight + 4} className="plot-axis" />
+                <text x={x} y={chartHeight - (showXAxisLabel ? 16 : 8)} textAnchor="middle" className="plot-tick-label" style={{ fontSize: `${metrics.tickFont}px` }}>
                   {Math.round(tick)}
                 </text>
               </g>
@@ -159,12 +164,12 @@ export function Histogram({
           })
         : null}
       {showXAxisLabel ? (
-        <text x={chartWidth / 2} y={chartHeight - 1.5} textAnchor="middle" className="plot-axis-label" style={{ fontSize: `${axisLabelFont}px` }}>
+        <text x={chartWidth / 2} y={chartHeight - 4} textAnchor="middle" className="plot-axis-label" style={{ fontSize: `${metrics.axisLabelFont}px` }}>
           ADC units
         </text>
       ) : null}
       {showYAxisLabel ? (
-        <text x={margin.left + 1} y={margin.top + 4} textAnchor="start" className="plot-axis-label" style={{ fontSize: `${axisLabelFont}px` }}>
+        <text x={margin.left + 2} y={margin.top + 10} textAnchor="start" className="plot-axis-label" style={{ fontSize: `${metrics.axisLabelFont}px` }}>
           Counts
         </text>
       ) : null}
@@ -180,6 +185,7 @@ export function LineSeries({
   showYAxisLabel = true,
   showXTicks = true,
   showYTicks = true,
+  variant = "mini",
 }: SharedPlotProps) {
   if (data.length === 0) {
     return <div className="line-empty">no points yet</div>;
@@ -188,13 +194,10 @@ export function LineSeries({
   const max = Math.max(...data, 1);
   const chartWidth = Math.max(60, width ?? 100);
   const chartHeight = Math.max(48, height);
-  const left = showYTicks ? Math.max(18, Math.min(28, chartWidth * 0.2)) : 8;
-  const bottom = showXTicks || showXAxisLabel ? Math.max(12, Math.min(20, chartHeight * 0.22)) : 7;
-  const margin = { top: 6, right: 4, bottom, left };
+  const metrics = getPlotMetrics(chartWidth, chartHeight, variant, showYTicks, showXTicks || showXAxisLabel);
+  const margin = { top: metrics.top, right: metrics.right, bottom: metrics.bottom, left: metrics.left };
   const innerWidth = Math.max(1, chartWidth - margin.left - margin.right);
   const innerHeight = Math.max(1, chartHeight - margin.top - margin.bottom);
-  const tickFont = Math.max(5.5, Math.min(7.5, chartHeight * 0.09));
-  const axisLabelFont = tickFont + 0.6;
   const yTicks = makeLinearTicks(0, max, 4);
   const xTicks = makeLinearTicks(0, Math.max(0, data.length - 1), 5);
   const points = data
@@ -213,14 +216,14 @@ export function LineSeries({
       })}
       <line x1={margin.left} y1={margin.top + innerHeight} x2={chartWidth - margin.right} y2={margin.top + innerHeight} className="plot-axis" />
       <line x1={margin.left} y1={margin.top} x2={margin.left} y2={margin.top + innerHeight} className="plot-axis" />
-      <polyline points={points} fill="none" stroke="var(--ql-accent-strong)" strokeWidth="2" />
+      <polyline points={points} fill="none" stroke="var(--ql-accent-strong)" strokeWidth={variant === "modal" ? 2.4 : 2} />
       {showYTicks
         ? yTicks.map((tick) => {
             const y = margin.top + innerHeight - (tick / max) * innerHeight;
             return (
               <g key={`line-yt-${tick}`}>
-                <line x1={margin.left - 3} x2={margin.left} y1={y} y2={y} className="plot-axis" />
-                <text x={margin.left - 4} y={y + 2} textAnchor="end" className="plot-tick-label" style={{ fontSize: `${tickFont}px` }}>
+                <line x1={margin.left - 4} x2={margin.left} y1={y} y2={y} className="plot-axis" />
+                <text x={margin.left - 6} y={y + 4} textAnchor="end" className="plot-tick-label" style={{ fontSize: `${metrics.tickFont}px` }}>
                   {formatAxisTick(tick)}
                 </text>
               </g>
@@ -233,8 +236,8 @@ export function LineSeries({
             const x = margin.left + ratio * innerWidth;
             return (
               <g key={`line-xt-${tick}`}>
-                <line x1={x} x2={x} y1={margin.top + innerHeight} y2={margin.top + innerHeight + 2.5} className="plot-axis" />
-                <text x={x} y={chartHeight - 8} textAnchor="middle" className="plot-tick-label" style={{ fontSize: `${tickFont}px` }}>
+                <line x1={x} x2={x} y1={margin.top + innerHeight} y2={margin.top + innerHeight + 4} className="plot-axis" />
+                <text x={x} y={chartHeight - (showXAxisLabel ? 16 : 8)} textAnchor="middle" className="plot-tick-label" style={{ fontSize: `${metrics.tickFont}px` }}>
                   {Math.round(tick)}
                 </text>
               </g>
@@ -242,12 +245,12 @@ export function LineSeries({
           })
         : null}
       {showXAxisLabel ? (
-        <text x={chartWidth / 2} y={chartHeight - 1.5} textAnchor="middle" className="plot-axis-label" style={{ fontSize: `${axisLabelFont}px` }}>
+        <text x={chartWidth / 2} y={chartHeight - 4} textAnchor="middle" className="plot-axis-label" style={{ fontSize: `${metrics.axisLabelFont}px` }}>
           Time (windows)
         </text>
       ) : null}
       {showYAxisLabel ? (
-        <text x={margin.left + 1} y={margin.top + 4} textAnchor="start" className="plot-axis-label" style={{ fontSize: `${axisLabelFont}px` }}>
+        <text x={margin.left + 2} y={margin.top + 10} textAnchor="start" className="plot-axis-label" style={{ fontSize: `${metrics.axisLabelFont}px` }}>
           Rate (Hz)
         </text>
       ) : null}
