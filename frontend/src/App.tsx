@@ -68,6 +68,27 @@ const histogramStreams: Array<{ key: "adc_x" | "adc_gtop" | "adc_gbot"; label: s
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
+const niceCeil = (value: number) => {
+  if (!Number.isFinite(value) || value <= 0) {
+    return 1;
+  }
+  const exponent = Math.floor(Math.log10(value));
+  const base = 10 ** exponent;
+  const normalized = value / base;
+  const niceStep = normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10;
+  return niceStep * base;
+};
+
+const formatRateMax = (value: number) => {
+  if (value >= 100) {
+    return value.toFixed(0);
+  }
+  if (value >= 10) {
+    return value.toFixed(1);
+  }
+  return value.toFixed(2);
+};
+
 const makeLinearTicks = (min: number, max: number, count = 5) => {
   if (!Number.isFinite(min) || !Number.isFinite(max)) {
     return [0];
@@ -263,7 +284,8 @@ function App() {
   }, []);
 
   const channels = useMemo(() => defaultChannels, []);
-  const countsMax = Math.max(1, ...channels.map((ch) => snapshot.counts_by_channel[String(ch)] || 0));
+  const rawCountsMax = Math.max(1, ...channels.map((ch) => snapshot.counts_by_channel[String(ch)] || 0));
+  const countsMax = niceCeil(rawCountsMax * 1.06);
   const heatMax = Math.max(1, ...snapshot.ratemap_8x8.flat());
   const heatMin = Math.min(...snapshot.ratemap_8x8.flat());
 
@@ -368,7 +390,7 @@ function App() {
             <div>
               <h2>Rate (Hz) per Channel</h2>
               <p className="subtitle">
-                {channels.length} channels · linear scale · auto max ({countsMax})
+                {channels.length} channels · linear scale · auto max ({formatRateMax(countsMax)} Hz)
               </p>
             </div>
           </div>
@@ -395,30 +417,7 @@ function App() {
               <p className="subtitle">8×8 channels · Aggregation Window: {snapshot.window_s}s</p>
             </div>
           </div>
-          <div className="heatmap-wrap">
-            <div className="heatmap">
-              {snapshot.ratemap_8x8.map((row, rowIndex) =>
-                row.map((value, colIndex) => {
-                  const color = hotColorScale(value, heatMin, heatMax);
-                  return (
-                    <div
-                      key={`${rowIndex}-${colIndex}`}
-                      className="heat-cell"
-                      style={{ backgroundColor: color }}
-                      title={`ch ${rowIndex * 8 + colIndex}: ${value.toFixed(2)} Hz`}
-                    >
-                      {rowIndex * 8 + colIndex}
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          </div>
-          <div className="color-bar">
-            <span>{heatMin.toFixed(2)} Hz</span>
-            <div className="gradient" />
-            <span>{heatMax.toFixed(2)} Hz</span>
-          </div>
+          <RateMapPanel ratemap={snapshot.ratemap_8x8} heatMin={heatMin} heatMax={heatMax} />
         </section>
 
         <section className="panel histograms-panel">
@@ -522,6 +521,54 @@ function App() {
           </div>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+function RateMapPanel({ ratemap, heatMin, heatMax }: { ratemap: number[][]; heatMin: number; heatMax: number }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const size = useElementSize(containerRef);
+
+  const layout = useMemo(() => {
+    const contentWidth = Math.max(0, size.width - 8);
+    const contentHeight = Math.max(0, size.height - 42);
+    const cellSize = Math.max(12, Math.floor(Math.min(contentWidth, contentHeight) / 8));
+    const gridSize = cellSize * 8;
+    return { cellSize, gridSize };
+  }, [size.height, size.width]);
+
+  return (
+    <div ref={containerRef} className="heatmap-panel-body">
+      <div className="heatmap-wrap" style={{ width: `${layout.gridSize}px` }}>
+        <div
+          className="heatmap"
+          style={{
+            gridTemplateColumns: `repeat(8, ${layout.cellSize}px)`,
+            gridTemplateRows: `repeat(8, ${layout.cellSize}px)`,
+          }}
+        >
+          {ratemap.map((row, rowIndex) =>
+            row.map((value, colIndex) => {
+              const color = hotColorScale(value, heatMin, heatMax);
+              return (
+                <div
+                  key={`${rowIndex}-${colIndex}`}
+                  className="heat-cell"
+                  style={{ backgroundColor: color }}
+                  title={`ch ${rowIndex * 8 + colIndex}: ${value.toFixed(2)} Hz`}
+                >
+                  {rowIndex * 8 + colIndex}
+                </div>
+              );
+            })
+          )}
+        </div>
+      </div>
+      <div className="color-bar">
+        <span>{heatMin.toFixed(2)} Hz</span>
+        <div className="gradient" />
+        <span>{heatMax.toFixed(2)} Hz</span>
+      </div>
     </div>
   );
 }
@@ -728,7 +775,7 @@ function LineSeries({
       })}
       <line x1={margin.left} y1={margin.top + innerHeight} x2={chartWidth - margin.right} y2={margin.top + innerHeight} className="plot-axis" />
       <line x1={margin.left} y1={margin.top} x2={margin.left} y2={margin.top + innerHeight} className="plot-axis" />
-      <polyline points={points} fill="none" stroke="#1d4ed8" strokeWidth="2" />
+      <polyline points={points} fill="none" stroke="var(--ql-accent-strong)" strokeWidth="2" />
       {showYTicks
         ? yTicks.map((tick) => {
             const y = margin.top + innerHeight - (tick / max) * innerHeight;
