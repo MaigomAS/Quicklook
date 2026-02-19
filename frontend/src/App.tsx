@@ -222,7 +222,7 @@ function App() {
           setSettings((prev) => ({
             ...prev,
             window_s: data.window_s,
-            channels: data.channels,
+            channels: 64,
             limits: data.limits ?? prev.limits,
           }));
         })
@@ -262,7 +262,7 @@ function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  const channels = useMemo(() => snapshot.channels, [snapshot.channels]);
+  const channels = useMemo(() => defaultChannels, []);
   const countsMax = Math.max(1, ...channels.map((ch) => snapshot.counts_by_channel[String(ch)] || 0));
   const heatMax = Math.max(1, ...snapshot.ratemap_8x8.flat());
   const heatMin = Math.min(...snapshot.ratemap_8x8.flat());
@@ -289,7 +289,7 @@ function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           window_s: Math.round(settings.window_s),
-          channels: Math.round(settings.channels),
+          channels: 64,
         }),
       });
       const payload = await response.json();
@@ -300,7 +300,7 @@ function App() {
       setSettings((prev) => ({
         ...prev,
         window_s: payload.window_s,
-        channels: payload.channels,
+        channels: 64,
       }));
       const freshSnapshot = await fetch(`${backendUrl}/snapshot`).then((res) => res.json());
       setSnapshot(normalizeSnapshot(freshSnapshot));
@@ -316,51 +316,34 @@ function App() {
     <div className="app">
       <header className="top-bar">
         <div className="app-container top-bar-content">
-          <div className="controls">
-            <button onClick={startAcq} disabled={status.running}>
-              Start
-            </button>
-            <button onClick={stopAcq} disabled={!status.running}>
-              Stop
-            </button>
-          </div>
-          <div className="status">
-            <span className={status.connected ? "dot ok" : "dot warn"} />
-            <span>{status.connected ? "Connected" : "Disconnected"}</span>
-            <span className={status.running ? "pill running" : "pill stopped"}>
-              {status.running ? "Running" : "Stopped"}
-            </span>
-            {lastStatusAt ? (
-              <span className="timestamp">Status: {lastStatusAt.toLocaleTimeString()}</span>
-            ) : null}
-            {status.last_error ? <span className="error">{status.last_error}</span> : null}
-          </div>
-        </div>
-      </header>
-
-      <main className="app-container dashboard-grid">
-        <section className="panel settings-panel">
-          <div className="panel-header">
-            <h2>Acquisition Settings</h2>
-            <button type="button" onClick={saveSettings} disabled={status.running || savingSettings}>
-              {savingSettings ? "Saving..." : "Apply"}
-            </button>
-          </div>
-          <div className="settings-grid">
-            <label>
-              <span className="label-with-help">
-                <span>Aggregation Window (s)</span>
-                <span className="help-tooltip-wrap">
-                  <span className="help-icon" tabIndex={0} aria-label="Aggregation window help">
-                    ⓘ
-                  </span>
-                  <span className="help-tooltip" role="tooltip">
-                    Aggregation window in seconds. This defines the time range used to compute
-                    rates in /snapshot (does not control total acquisition duration). Used for
-                    computing per-channel rates from snapshot data.
-                  </span>
-                </span>
+          <div className="top-bar-main">
+            <div className="controls">
+              <button onClick={startAcq} disabled={status.running}>
+                Start
+              </button>
+              <button onClick={stopAcq} disabled={!status.running}>
+                Stop
+              </button>
+            </div>
+            <div className="status">
+              <span className={status.connected ? "dot ok" : "dot warn"} />
+              <span>{status.connected ? "Connected" : "Disconnected"}</span>
+              <span className={status.running ? "pill running" : "pill stopped"}>
+                {status.running ? "Running" : "Stopped"}
               </span>
+              {lastStatusAt ? (
+                <span className="timestamp">Status: {lastStatusAt.toLocaleTimeString()}</span>
+              ) : null}
+              {lastSnapshotAt ? (
+                <span className="timestamp">Snapshot: {lastSnapshotAt.toLocaleTimeString()}</span>
+              ) : null}
+              {status.last_error ? <span className="error">{status.last_error}</span> : null}
+            </div>
+          </div>
+          <div className="inline-settings">
+            <span className="inline-settings-title">Acquisition Settings</span>
+            <label>
+              <span>Aggregation Window (s)</span>
               <input
                 type="number"
                 min={settings.limits?.min_window_s ?? 1}
@@ -370,32 +353,20 @@ function App() {
                   setSettings((prev) => ({ ...prev, window_s: Number(event.target.value) }))
                 }
               />
-              <span className="input-helper">
-                Aggregation window in seconds. This defines the time range used to compute rates in
-                /snapshot (does not control total acquisition duration).
-              </span>
             </label>
-            <label>
-              Max channels
-              <input
-                type="number"
-                min={settings.limits?.min_channels ?? 1}
-                max={settings.limits?.max_channels ?? 64}
-                value={settings.channels}
-                onChange={(event) =>
-                  setSettings((prev) => ({ ...prev, channels: Number(event.target.value) }))
-                }
-              />
-            </label>
+            <button type="button" onClick={saveSettings} disabled={status.running || savingSettings}>
+              {savingSettings ? "Saving..." : "Apply"}
+            </button>
+            {settingsError ? <span className="settings-error">{settingsError}</span> : null}
           </div>
-          <p className="subtitle">Stop acquisition before applying configuration changes.</p>
-          {settingsError ? <p className="settings-error">{settingsError}</p> : null}
-        </section>
+        </div>
+      </header>
 
+      <main className="app-container dashboard-grid">
         <section className="panel counts-panel">
           <div className="panel-header">
             <div>
-              <h2>Counts per Channel</h2>
+              <h2>Rate (Hz) per Channel</h2>
               <p className="subtitle">
                 {channels.length} channels · linear scale · auto max ({countsMax})
               </p>
@@ -407,8 +378,10 @@ function App() {
               const height = (count / countsMax) * 100;
               return (
                 <div key={ch} className="bar-item-64" title={`ch ${ch}: ${count} counts`}>
-                  <div className="bar-64" style={{ height: `${height}%` }} />
-                  <span>ch {ch}</span>
+                  <div className="bar-track-64">
+                    <div className="bar-64" style={{ height: `${height}%` }} />
+                  </div>
+                  {ch % 8 === 0 ? <span>ch {ch}</span> : <span className="bar-label-spacer" aria-hidden="true" />}
                 </div>
               );
             })}
@@ -421,9 +394,6 @@ function App() {
               <h2>Rate Map (Hz)</h2>
               <p className="subtitle">8×8 channels · Aggregation Window: {snapshot.window_s}s</p>
             </div>
-            {lastSnapshotAt ? (
-              <span className="timestamp">Snapshot: {lastSnapshotAt.toLocaleTimeString()}</span>
-            ) : null}
           </div>
           <div className="heatmap-wrap">
             <div className="heatmap">
@@ -535,14 +505,6 @@ function App() {
           </div>
         </section>
 
-        <section className="panel notes-panel">
-          <h2>Notes</h2>
-          <ul className="notes">
-            {snapshot.notes.map((note, index) => (
-              <li key={index}>{note}</li>
-            ))}
-          </ul>
-        </section>
       </main>
 
       {selectedPlot ? (
