@@ -66,6 +66,52 @@ const histogramStreams: Array<{ key: "adc_x" | "adc_gtop" | "adc_gbot"; label: s
   { key: "adc_gbot", label: "adc_gbot" },
 ];
 
+const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+
+const makeLinearTicks = (min: number, max: number, count = 5) => {
+  if (!Number.isFinite(min) || !Number.isFinite(max)) {
+    return [0];
+  }
+  if (min === max) {
+    return [min];
+  }
+  return Array.from({ length: count }, (_, index) => min + ((max - min) * index) / (count - 1));
+};
+
+const formatAxisTick = (value: number) => {
+  if (Math.abs(value) >= 1000) {
+    return value.toFixed(0);
+  }
+  if (Math.abs(value) >= 100) {
+    return value.toFixed(1);
+  }
+  if (Math.abs(value) >= 10) {
+    return value.toFixed(1);
+  }
+  return value.toFixed(2);
+};
+
+const interpolateColor = (start: [number, number, number], end: [number, number, number], t: number) =>
+  start.map((channel, index) => Math.round(channel + (end[index] - channel) * t)) as [number, number, number];
+
+const hotColorScale = (value: number, min: number, max: number) => {
+  const stops = [
+    { at: 0, color: [255, 250, 210] as [number, number, number] },
+    { at: 0.4, color: [255, 183, 77] as [number, number, number] },
+    { at: 0.75, color: [244, 67, 54] as [number, number, number] },
+    { at: 1, color: [139, 0, 0] as [number, number, number] },
+  ];
+  const normalized = clamp(max === min ? 0 : (value - min) / (max - min), 0, 1);
+  const rightIndex = stops.findIndex((stop) => normalized <= stop.at);
+  if (rightIndex <= 0) {
+    return `rgb(${stops[0].color.join(",")})`;
+  }
+  const left = stops[rightIndex - 1];
+  const right = stops[rightIndex];
+  const segmentT = (normalized - left.at) / (right.at - left.at);
+  return `rgb(${interpolateColor(left.color, right.color, segmentT).join(",")})`;
+};
+
 const ensureRatemap = (ratemap?: number[][]) => {
   if (!ratemap || ratemap.length !== 8 || ratemap.some((row) => row.length !== 8)) {
     return defaultSnapshot.ratemap_8x8;
@@ -219,6 +265,7 @@ function App() {
   const channels = useMemo(() => snapshot.channels, [snapshot.channels]);
   const countsMax = Math.max(1, ...channels.map((ch) => snapshot.counts_by_channel[String(ch)] || 0));
   const heatMax = Math.max(1, ...snapshot.ratemap_8x8.flat());
+  const heatMin = Math.min(...snapshot.ratemap_8x8.flat());
 
   const histogramPageSize = 4;
   const maxHistOffset = Math.max(0, channels.length - histogramPageSize);
@@ -370,31 +417,35 @@ function App() {
 
         <section className="panel rate-panel">
           <div className="panel-header">
-            <h2>Rate Map (8x8)</h2>
+            <div>
+              <h2>Rate Map (Hz)</h2>
+              <p className="subtitle">8×8 channels · Aggregation Window: {snapshot.window_s}s</p>
+            </div>
             {lastSnapshotAt ? (
               <span className="timestamp">Snapshot: {lastSnapshotAt.toLocaleTimeString()}</span>
             ) : null}
           </div>
-          <div className="heatmap">
-            {snapshot.ratemap_8x8.map((row, rowIndex) =>
-              row.map((value, colIndex) => {
-                const intensity = value / heatMax;
-                const color = `rgba(34, 102, 204, ${0.15 + intensity * 0.85})`;
-                return (
-                  <div
-                    key={`${rowIndex}-${colIndex}`}
-                    className="heat-cell"
-                    style={{ backgroundColor: color }}
-                    title={`ch ${rowIndex * 8 + colIndex}: ${value.toFixed(2)} Hz`}
-                  >
-                    {rowIndex * 8 + colIndex}
-                  </div>
-                );
-              })
-            )}
+          <div className="heatmap-wrap">
+            <div className="heatmap">
+              {snapshot.ratemap_8x8.map((row, rowIndex) =>
+                row.map((value, colIndex) => {
+                  const color = hotColorScale(value, heatMin, heatMax);
+                  return (
+                    <div
+                      key={`${rowIndex}-${colIndex}`}
+                      className="heat-cell"
+                      style={{ backgroundColor: color }}
+                      title={`ch ${rowIndex * 8 + colIndex}: ${value.toFixed(2)} Hz`}
+                    >
+                      {rowIndex * 8 + colIndex}
+                    </div>
+                  );
+                })
+              )}
+            </div>
           </div>
           <div className="color-bar">
-            <span>0 Hz</span>
+            <span>{heatMin.toFixed(2)} Hz</span>
             <div className="gradient" />
             <span>{heatMax.toFixed(2)} Hz</span>
           </div>
@@ -501,14 +552,65 @@ function App() {
 
 function Histogram({ data, height }: { data: number[]; height: number }) {
   const max = Math.max(1, ...data);
+  const width = Math.max(data.length, 64);
+  const margin = { top: 8, right: 6, bottom: 24, left: 28 };
+  const innerWidth = width - margin.left - margin.right;
+  const innerHeight = height - margin.top - margin.bottom;
+  const yTicks = makeLinearTicks(0, max, 4);
+  const xTicks = makeLinearTicks(0, Math.max(0, data.length - 1), 5);
+
   return (
-    <svg className="histogram" viewBox={`0 0 64 ${height}`} preserveAspectRatio="none">
+    <svg className="histogram" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none">
+      {yTicks.map((tick) => {
+        const y = margin.top + innerHeight - (tick / max) * innerHeight;
+        return <line key={`grid-y-${tick}`} x1={margin.left} x2={width - margin.right} y1={y} y2={y} className="plot-grid" />;
+      })}
       {data.map((value, index) => {
-        const barHeight = (value / max) * height;
+        const barWidth = innerWidth / Math.max(1, data.length);
+        const barHeight = (value / max) * innerHeight;
+        const x = margin.left + index * barWidth + barWidth * 0.08;
         return (
-          <rect key={index} x={index} y={height - barHeight} width={0.9} height={barHeight} rx={0.5} />
+          <rect
+            key={index}
+            x={x}
+            y={margin.top + innerHeight - barHeight}
+            width={Math.max(0.6, barWidth * 0.84)}
+            height={barHeight}
+            rx={0.5}
+          />
         );
       })}
+      <line x1={margin.left} y1={margin.top + innerHeight} x2={width - margin.right} y2={margin.top + innerHeight} className="plot-axis" />
+      <line x1={margin.left} y1={margin.top} x2={margin.left} y2={margin.top + innerHeight} className="plot-axis" />
+      {yTicks.map((tick) => {
+        const y = margin.top + innerHeight - (tick / max) * innerHeight;
+        return (
+          <g key={`yt-${tick}`}>
+            <line x1={margin.left - 3} x2={margin.left} y1={y} y2={y} className="plot-axis" />
+            <text x={margin.left - 4} y={y + 3} textAnchor="end" className="plot-tick-label">
+              {formatAxisTick(tick)}
+            </text>
+          </g>
+        );
+      })}
+      {xTicks.map((tick) => {
+        const ratio = data.length <= 1 ? 0 : tick / (data.length - 1);
+        const x = margin.left + ratio * innerWidth;
+        return (
+          <g key={`xt-${tick}`}>
+            <line x1={x} x2={x} y1={margin.top + innerHeight} y2={margin.top + innerHeight + 3} className="plot-axis" />
+            <text x={x} y={height - 12} textAnchor="middle" className="plot-tick-label">
+              {Math.round(tick)}
+            </text>
+          </g>
+        );
+      })}
+      <text x={width / 2} y={height - 2} textAnchor="middle" className="plot-axis-label">
+        ADC units
+      </text>
+      <text x={8} y={margin.top + innerHeight / 2} textAnchor="middle" className="plot-axis-label" transform={`rotate(-90, 8, ${margin.top + innerHeight / 2})`}>
+        Counts
+      </text>
     </svg>
   );
 }
@@ -519,17 +621,58 @@ function LineSeries({ data, height }: { data: number[]; height: number }) {
   }
 
   const max = Math.max(...data, 1);
+  const width = 100;
+  const margin = { top: 8, right: 6, bottom: 24, left: 28 };
+  const innerWidth = width - margin.left - margin.right;
+  const innerHeight = height - margin.top - margin.bottom;
+  const yTicks = makeLinearTicks(0, max, 4);
+  const xTicks = makeLinearTicks(0, Math.max(0, data.length - 1), 5);
   const points = data
     .map((value, index) => {
-      const x = data.length === 1 ? 0 : (index / (data.length - 1)) * 100;
-      const y = height - (value / max) * height;
+      const x = margin.left + (data.length === 1 ? 0 : (index / (data.length - 1)) * innerWidth);
+      const y = margin.top + innerHeight - (value / max) * innerHeight;
       return `${x},${y.toFixed(1)}`;
     })
     .join(" ");
 
   return (
     <svg className="line-series" viewBox={`0 0 100 ${height}`} preserveAspectRatio="none">
+      {yTicks.map((tick) => {
+        const y = margin.top + innerHeight - (tick / max) * innerHeight;
+        return <line key={`line-grid-${tick}`} x1={margin.left} x2={width - margin.right} y1={y} y2={y} className="plot-grid" />;
+      })}
+      <line x1={margin.left} y1={margin.top + innerHeight} x2={width - margin.right} y2={margin.top + innerHeight} className="plot-axis" />
+      <line x1={margin.left} y1={margin.top} x2={margin.left} y2={margin.top + innerHeight} className="plot-axis" />
       <polyline points={points} fill="none" stroke="#1d4ed8" strokeWidth="2" />
+      {yTicks.map((tick) => {
+        const y = margin.top + innerHeight - (tick / max) * innerHeight;
+        return (
+          <g key={`line-yt-${tick}`}>
+            <line x1={margin.left - 3} x2={margin.left} y1={y} y2={y} className="plot-axis" />
+            <text x={margin.left - 4} y={y + 3} textAnchor="end" className="plot-tick-label">
+              {formatAxisTick(tick)}
+            </text>
+          </g>
+        );
+      })}
+      {xTicks.map((tick) => {
+        const ratio = data.length <= 1 ? 0 : tick / (data.length - 1);
+        const x = margin.left + ratio * innerWidth;
+        return (
+          <g key={`line-xt-${tick}`}>
+            <line x1={x} x2={x} y1={margin.top + innerHeight} y2={margin.top + innerHeight + 3} className="plot-axis" />
+            <text x={x} y={height - 12} textAnchor="middle" className="plot-tick-label">
+              {Math.round(tick)}
+            </text>
+          </g>
+        );
+      })}
+      <text x={width / 2} y={height - 2} textAnchor="middle" className="plot-axis-label">
+        Time (windows)
+      </text>
+      <text x={8} y={margin.top + innerHeight / 2} textAnchor="middle" className="plot-axis-label" transform={`rotate(-90, 8, ${margin.top + innerHeight / 2})`}>
+        Rate (Hz)
+      </text>
     </svg>
   );
 }
