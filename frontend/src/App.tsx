@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 type Snapshot = {
   window_s: number;
@@ -65,6 +65,52 @@ const histogramStreams: Array<{ key: "adc_x" | "adc_gtop" | "adc_gbot"; label: s
   { key: "adc_gtop", label: "adc_gtop" },
   { key: "adc_gbot", label: "adc_gbot" },
 ];
+
+const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+
+const makeLinearTicks = (min: number, max: number, count = 5) => {
+  if (!Number.isFinite(min) || !Number.isFinite(max)) {
+    return [0];
+  }
+  if (min === max) {
+    return [min];
+  }
+  return Array.from({ length: count }, (_, index) => min + ((max - min) * index) / (count - 1));
+};
+
+const formatAxisTick = (value: number) => {
+  if (Math.abs(value) >= 1000) {
+    return value.toFixed(0);
+  }
+  if (Math.abs(value) >= 100) {
+    return value.toFixed(1);
+  }
+  if (Math.abs(value) >= 10) {
+    return value.toFixed(1);
+  }
+  return value.toFixed(2);
+};
+
+const interpolateColor = (start: [number, number, number], end: [number, number, number], t: number) =>
+  start.map((channel, index) => Math.round(channel + (end[index] - channel) * t)) as [number, number, number];
+
+const hotColorScale = (value: number, min: number, max: number) => {
+  const stops = [
+    { at: 0, color: [255, 250, 210] as [number, number, number] },
+    { at: 0.4, color: [255, 183, 77] as [number, number, number] },
+    { at: 0.75, color: [244, 67, 54] as [number, number, number] },
+    { at: 1, color: [139, 0, 0] as [number, number, number] },
+  ];
+  const normalized = clamp(max === min ? 0 : (value - min) / (max - min), 0, 1);
+  const rightIndex = stops.findIndex((stop) => normalized <= stop.at);
+  if (rightIndex <= 0) {
+    return `rgb(${stops[0].color.join(",")})`;
+  }
+  const left = stops[rightIndex - 1];
+  const right = stops[rightIndex];
+  const segmentT = (normalized - left.at) / (right.at - left.at);
+  return `rgb(${interpolateColor(left.color, right.color, segmentT).join(",")})`;
+};
 
 const ensureRatemap = (ratemap?: number[][]) => {
   if (!ratemap || ratemap.length !== 8 || ratemap.some((row) => row.length !== 8)) {
@@ -219,6 +265,7 @@ function App() {
   const channels = useMemo(() => snapshot.channels, [snapshot.channels]);
   const countsMax = Math.max(1, ...channels.map((ch) => snapshot.counts_by_channel[String(ch)] || 0));
   const heatMax = Math.max(1, ...snapshot.ratemap_8x8.flat());
+  const heatMin = Math.min(...snapshot.ratemap_8x8.flat());
 
   const histogramPageSize = 4;
   const maxHistOffset = Math.max(0, channels.length - histogramPageSize);
@@ -370,31 +417,35 @@ function App() {
 
         <section className="panel rate-panel">
           <div className="panel-header">
-            <h2>Rate Map (8x8)</h2>
+            <div>
+              <h2>Rate Map (Hz)</h2>
+              <p className="subtitle">8×8 channels · Aggregation Window: {snapshot.window_s}s</p>
+            </div>
             {lastSnapshotAt ? (
               <span className="timestamp">Snapshot: {lastSnapshotAt.toLocaleTimeString()}</span>
             ) : null}
           </div>
-          <div className="heatmap">
-            {snapshot.ratemap_8x8.map((row, rowIndex) =>
-              row.map((value, colIndex) => {
-                const intensity = value / heatMax;
-                const color = `rgba(34, 102, 204, ${0.15 + intensity * 0.85})`;
-                return (
-                  <div
-                    key={`${rowIndex}-${colIndex}`}
-                    className="heat-cell"
-                    style={{ backgroundColor: color }}
-                    title={`ch ${rowIndex * 8 + colIndex}: ${value.toFixed(2)} Hz`}
-                  >
-                    {rowIndex * 8 + colIndex}
-                  </div>
-                );
-              })
-            )}
+          <div className="heatmap-wrap">
+            <div className="heatmap">
+              {snapshot.ratemap_8x8.map((row, rowIndex) =>
+                row.map((value, colIndex) => {
+                  const color = hotColorScale(value, heatMin, heatMax);
+                  return (
+                    <div
+                      key={`${rowIndex}-${colIndex}`}
+                      className="heat-cell"
+                      style={{ backgroundColor: color }}
+                      title={`ch ${rowIndex * 8 + colIndex}: ${value.toFixed(2)} Hz`}
+                    >
+                      {rowIndex * 8 + colIndex}
+                    </div>
+                  );
+                })
+              )}
+            </div>
           </div>
           <div className="color-bar">
-            <span>0 Hz</span>
+            <span>{heatMin.toFixed(2)} Hz</span>
             <div className="gradient" />
             <span>{heatMax.toFixed(2)} Hz</span>
           </div>
@@ -433,40 +484,54 @@ function App() {
             <span>adc_gbot</span>
             <span>rate vs time</span>
           </div>
+          <p className="plot-caption">Y: Counts (per window) • X: ADC units • Trend: Rate (Hz) vs Time (windows)</p>
           <div className="hist-table">
-            {visibleHistogramChannels.map((ch) => (
-              <div key={ch} className="hist-row hist-row-compact">
-                <div className="channel-label">ch {ch}</div>
-                {histogramStreams.map((stream) => {
-                  const data = snapshot.histograms[stream.key][String(ch)] || Array(64).fill(0);
-                  return (
-                    <button
-                      key={`${ch}-${stream.key}`}
-                      type="button"
-                      className="mini-plot"
-                      onClick={() =>
-                        setSelectedPlot({ title: `Channel ${ch} · ${stream.label}`, kind: "histogram", data })
-                      }
-                    >
-                      <Histogram data={data} height={70} />
-                    </button>
-                  );
-                })}
-                <button
-                  type="button"
-                  className="mini-plot"
-                  onClick={() =>
-                    setSelectedPlot({
-                      title: `Channel ${ch} · Instant rate history`,
-                      kind: "line",
-                      data: snapshot.rate_history[String(ch)] ?? [],
-                    })
-                  }
-                >
-                  <LineSeries data={snapshot.rate_history[String(ch)] ?? []} height={70} />
-                </button>
-              </div>
-            ))}
+            {visibleHistogramChannels.map((ch, rowIndex) => {
+              const isLastRow = rowIndex === visibleHistogramChannels.length - 1;
+              return (
+                <div key={ch} className="hist-row hist-row-compact">
+                  <div className="channel-label">ch {ch}</div>
+                  {histogramStreams.map((stream, streamIndex) => {
+                    const data = snapshot.histograms[stream.key][String(ch)] || Array(64).fill(0);
+                    return (
+                      <button
+                        key={`${ch}-${stream.key}`}
+                        type="button"
+                        className="mini-plot"
+                        onClick={() =>
+                          setSelectedPlot({ title: `Channel ${ch} · ${stream.label}`, kind: "histogram", data })
+                        }
+                      >
+                        <MiniPlotChart
+                          kind="histogram"
+                          data={data}
+                          showXAxisLabel={isLastRow}
+                          showYAxisLabel={streamIndex === 0}
+                        />
+                      </button>
+                    );
+                  })}
+                  <button
+                    type="button"
+                    className="mini-plot"
+                    onClick={() =>
+                      setSelectedPlot({
+                        title: `Channel ${ch} · Instant rate history`,
+                        kind: "line",
+                        data: snapshot.rate_history[String(ch)] ?? [],
+                      })
+                    }
+                  >
+                    <MiniPlotChart
+                      kind="line"
+                      data={snapshot.rate_history[String(ch)] ?? []}
+                      showXAxisLabel={isLastRow}
+                      showYAxisLabel={rowIndex === 0}
+                    />
+                  </button>
+                </div>
+              );
+            })}
           </div>
         </section>
 
@@ -499,37 +564,246 @@ function App() {
   );
 }
 
-function Histogram({ data, height }: { data: number[]; height: number }) {
-  const max = Math.max(1, ...data);
+
+function useElementSize<T extends HTMLElement>(ref: { current: T | null }) {
+  const [size, setSize] = useState({ width: 0, height: 0 });
+
+  useEffect(() => {
+    const node = ref.current;
+    if (!node) {
+      return;
+    }
+
+    const update = () => {
+      const rect = node.getBoundingClientRect();
+      setSize({
+        width: Math.max(1, Math.floor(rect.width)),
+        height: Math.max(1, Math.floor(rect.height)),
+      });
+    };
+
+    update();
+
+    const observer = new ResizeObserver(update);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [ref]);
+
+  return size;
+}
+
+type SharedPlotProps = {
+  data: number[];
+  height?: number;
+  width?: number;
+  showXAxisLabel?: boolean;
+  showYAxisLabel?: boolean;
+  showXTicks?: boolean;
+  showYTicks?: boolean;
+};
+
+function MiniPlotChart({
+  kind,
+  data,
+  showXAxisLabel,
+  showYAxisLabel,
+}: {
+  kind: "histogram" | "line";
+  data: number[];
+  showXAxisLabel: boolean;
+  showYAxisLabel: boolean;
+}) {
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  const size = useElementSize(wrapperRef);
+
   return (
-    <svg className="histogram" viewBox={`0 0 64 ${height}`} preserveAspectRatio="none">
+    <div ref={wrapperRef} className="mini-plot-canvas">
+      {kind === "histogram" ? (
+        <Histogram
+          data={data}
+          width={size.width}
+          height={size.height}
+          showXAxisLabel={showXAxisLabel}
+          showYAxisLabel={showYAxisLabel}
+        />
+      ) : (
+        <LineSeries
+          data={data}
+          width={size.width}
+          height={size.height}
+          showXAxisLabel={showXAxisLabel}
+          showYAxisLabel={showYAxisLabel}
+        />
+      )}
+    </div>
+  );
+}
+
+function Histogram({
+  data,
+  height = 220,
+  width,
+  showXAxisLabel = true,
+  showYAxisLabel = true,
+  showXTicks = true,
+  showYTicks = true,
+}: SharedPlotProps) {
+  const max = Math.max(1, ...data);
+  const chartWidth = Math.max(60, width ?? Math.max(data.length, 64));
+  const chartHeight = Math.max(48, height);
+  const left = showYTicks ? Math.max(18, Math.min(28, chartWidth * 0.2)) : 8;
+  const bottom = showXTicks || showXAxisLabel ? Math.max(12, Math.min(20, chartHeight * 0.22)) : 7;
+  const margin = { top: 6, right: 4, bottom, left };
+  const innerWidth = Math.max(1, chartWidth - margin.left - margin.right);
+  const innerHeight = Math.max(1, chartHeight - margin.top - margin.bottom);
+  const tickFont = Math.max(5.5, Math.min(7.5, chartHeight * 0.09));
+  const axisLabelFont = tickFont + 0.6;
+  const yTicks = makeLinearTicks(0, max, 4);
+  const xTicks = makeLinearTicks(0, Math.max(0, data.length - 1), 5);
+
+  return (
+    <svg className="histogram" viewBox={`0 0 ${chartWidth} ${chartHeight}`} preserveAspectRatio="none">
+      {yTicks.map((tick) => {
+        const y = margin.top + innerHeight - (tick / max) * innerHeight;
+        return <line key={`grid-y-${tick}`} x1={margin.left} x2={chartWidth - margin.right} y1={y} y2={y} className="plot-grid" />;
+      })}
       {data.map((value, index) => {
-        const barHeight = (value / max) * height;
+        const barWidth = innerWidth / Math.max(1, data.length);
+        const barHeight = (value / max) * innerHeight;
+        const x = margin.left + index * barWidth + barWidth * 0.08;
         return (
-          <rect key={index} x={index} y={height - barHeight} width={0.9} height={barHeight} rx={0.5} />
+          <rect
+            key={index}
+            x={x}
+            y={margin.top + innerHeight - barHeight}
+            width={Math.max(0.6, barWidth * 0.84)}
+            height={barHeight}
+            rx={0.5}
+          />
         );
       })}
+      <line x1={margin.left} y1={margin.top + innerHeight} x2={chartWidth - margin.right} y2={margin.top + innerHeight} className="plot-axis" />
+      <line x1={margin.left} y1={margin.top} x2={margin.left} y2={margin.top + innerHeight} className="plot-axis" />
+      {showYTicks
+        ? yTicks.map((tick) => {
+            const y = margin.top + innerHeight - (tick / max) * innerHeight;
+            return (
+              <g key={`yt-${tick}`}>
+                <line x1={margin.left - 3} x2={margin.left} y1={y} y2={y} className="plot-axis" />
+                <text x={margin.left - 4} y={y + 2} textAnchor="end" className="plot-tick-label" style={{ fontSize: `${tickFont}px` }}>
+                  {formatAxisTick(tick)}
+                </text>
+              </g>
+            );
+          })
+        : null}
+      {showXTicks
+        ? xTicks.map((tick) => {
+            const ratio = data.length <= 1 ? 0 : tick / (data.length - 1);
+            const x = margin.left + ratio * innerWidth;
+            return (
+              <g key={`xt-${tick}`}>
+                <line x1={x} x2={x} y1={margin.top + innerHeight} y2={margin.top + innerHeight + 2.5} className="plot-axis" />
+                <text x={x} y={chartHeight - 8} textAnchor="middle" className="plot-tick-label" style={{ fontSize: `${tickFont}px` }}>
+                  {Math.round(tick)}
+                </text>
+              </g>
+            );
+          })
+        : null}
+      {showXAxisLabel ? (
+        <text x={chartWidth / 2} y={chartHeight - 1.5} textAnchor="middle" className="plot-axis-label" style={{ fontSize: `${axisLabelFont}px` }}>
+          ADC units
+        </text>
+      ) : null}
+      {showYAxisLabel ? (
+        <text x={margin.left + 1} y={margin.top + 4} textAnchor="start" className="plot-axis-label" style={{ fontSize: `${axisLabelFont}px` }}>
+          Counts
+        </text>
+      ) : null}
     </svg>
   );
 }
 
-function LineSeries({ data, height }: { data: number[]; height: number }) {
+function LineSeries({
+  data,
+  height = 220,
+  width,
+  showXAxisLabel = true,
+  showYAxisLabel = true,
+  showXTicks = true,
+  showYTicks = true,
+}: SharedPlotProps) {
   if (data.length === 0) {
     return <div className="line-empty">no points yet</div>;
   }
 
   const max = Math.max(...data, 1);
+  const chartWidth = Math.max(60, width ?? 100);
+  const chartHeight = Math.max(48, height);
+  const left = showYTicks ? Math.max(18, Math.min(28, chartWidth * 0.2)) : 8;
+  const bottom = showXTicks || showXAxisLabel ? Math.max(12, Math.min(20, chartHeight * 0.22)) : 7;
+  const margin = { top: 6, right: 4, bottom, left };
+  const innerWidth = Math.max(1, chartWidth - margin.left - margin.right);
+  const innerHeight = Math.max(1, chartHeight - margin.top - margin.bottom);
+  const tickFont = Math.max(5.5, Math.min(7.5, chartHeight * 0.09));
+  const axisLabelFont = tickFont + 0.6;
+  const yTicks = makeLinearTicks(0, max, 4);
+  const xTicks = makeLinearTicks(0, Math.max(0, data.length - 1), 5);
   const points = data
     .map((value, index) => {
-      const x = data.length === 1 ? 0 : (index / (data.length - 1)) * 100;
-      const y = height - (value / max) * height;
+      const x = margin.left + (data.length === 1 ? 0 : (index / (data.length - 1)) * innerWidth);
+      const y = margin.top + innerHeight - (value / max) * innerHeight;
       return `${x},${y.toFixed(1)}`;
     })
     .join(" ");
 
   return (
-    <svg className="line-series" viewBox={`0 0 100 ${height}`} preserveAspectRatio="none">
+    <svg className="line-series" viewBox={`0 0 ${chartWidth} ${chartHeight}`} preserveAspectRatio="none">
+      {yTicks.map((tick) => {
+        const y = margin.top + innerHeight - (tick / max) * innerHeight;
+        return <line key={`line-grid-${tick}`} x1={margin.left} x2={chartWidth - margin.right} y1={y} y2={y} className="plot-grid" />;
+      })}
+      <line x1={margin.left} y1={margin.top + innerHeight} x2={chartWidth - margin.right} y2={margin.top + innerHeight} className="plot-axis" />
+      <line x1={margin.left} y1={margin.top} x2={margin.left} y2={margin.top + innerHeight} className="plot-axis" />
       <polyline points={points} fill="none" stroke="#1d4ed8" strokeWidth="2" />
+      {showYTicks
+        ? yTicks.map((tick) => {
+            const y = margin.top + innerHeight - (tick / max) * innerHeight;
+            return (
+              <g key={`line-yt-${tick}`}>
+                <line x1={margin.left - 3} x2={margin.left} y1={y} y2={y} className="plot-axis" />
+                <text x={margin.left - 4} y={y + 2} textAnchor="end" className="plot-tick-label" style={{ fontSize: `${tickFont}px` }}>
+                  {formatAxisTick(tick)}
+                </text>
+              </g>
+            );
+          })
+        : null}
+      {showXTicks
+        ? xTicks.map((tick) => {
+            const ratio = data.length <= 1 ? 0 : tick / (data.length - 1);
+            const x = margin.left + ratio * innerWidth;
+            return (
+              <g key={`line-xt-${tick}`}>
+                <line x1={x} x2={x} y1={margin.top + innerHeight} y2={margin.top + innerHeight + 2.5} className="plot-axis" />
+                <text x={x} y={chartHeight - 8} textAnchor="middle" className="plot-tick-label" style={{ fontSize: `${tickFont}px` }}>
+                  {Math.round(tick)}
+                </text>
+              </g>
+            );
+          })
+        : null}
+      {showXAxisLabel ? (
+        <text x={chartWidth / 2} y={chartHeight - 1.5} textAnchor="middle" className="plot-axis-label" style={{ fontSize: `${axisLabelFont}px` }}>
+          Time (windows)
+        </text>
+      ) : null}
+      {showYAxisLabel ? (
+        <text x={margin.left + 1} y={margin.top + 4} textAnchor="start" className="plot-axis-label" style={{ fontSize: `${axisLabelFont}px` }}>
+          Rate (Hz)
+        </text>
+      ) : null}
     </svg>
   );
 }
