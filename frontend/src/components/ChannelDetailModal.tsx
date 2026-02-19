@@ -1,4 +1,4 @@
-import { useRef, useEffect } from "react";
+import { useRef, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { Histogram, LineSeries } from "./Plots";
 import { useElementSize } from "./useElementSize";
@@ -29,15 +29,41 @@ function PlotCard({
 }) {
   const chartRef = useRef<HTMLDivElement>(null);
   const size = useElementSize(chartRef);
+  const [stableSize, setStableSize] = useState({ width: 0, height: 0 });
+
+  useEffect(() => {
+    let frameOne = 0;
+    let frameTwo = 0;
+
+    if (size.width < 80 || size.height < 80) {
+      setStableSize({ width: 0, height: 0 });
+      return;
+    }
+
+    frameOne = window.requestAnimationFrame(() => {
+      frameTwo = window.requestAnimationFrame(() => {
+        setStableSize(size);
+      });
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frameOne);
+      window.cancelAnimationFrame(frameTwo);
+    };
+  }, [size]);
+
+  const showChart = stableSize.width >= 80 && stableSize.height >= 80;
 
   return (
     <section className="channel-modal-plot">
       <h4>{title}</h4>
       <div ref={chartRef} className="channel-modal-chart-area">
-        {type === "histogram" ? (
-          <Histogram data={data} width={size.width} height={size.height} variant="modal" />
+        {!showChart ? (
+          <div className="channel-modal-chart-skeleton" aria-hidden="true" />
+        ) : type === "histogram" ? (
+          <Histogram data={data} width={stableSize.width} height={stableSize.height} variant="modal" />
         ) : (
-          <LineSeries data={data} width={size.width} height={size.height} variant="modal" />
+          <LineSeries data={data} width={stableSize.width} height={stableSize.height} variant="modal" />
         )}
       </div>
     </section>
