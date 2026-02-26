@@ -21,3 +21,8 @@
 
 - Minimal clean styling, simple charts built with CSS/SVG.
 - Dark modal overlay for plot details, close via X or ESC.
+
+
+## Monitor Window Color Direction
+
+- Detailed proposal in `docs/06-Monitor-Color-Proposal.md` for a coherent-but-distinct color system between main and monitor windows.
