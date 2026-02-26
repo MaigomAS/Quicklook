@@ -5,6 +5,7 @@ import { useElementSize } from "./components/useElementSize";
 
 type Snapshot = {
   window_s: number;
+  sample_s: number;
   t_start_us: number;
   t_end_us: number;
   channels: number[];
@@ -22,12 +23,14 @@ type Snapshot = {
 
 type Status = {
   running: boolean;
+  paused: boolean;
   connected: boolean;
   last_error?: string | null;
 };
 
 type BackendConfig = {
   window_s: number;
+  sample_s: number;
   channels: number;
   limits?: {
     min_window_s: number;
@@ -42,6 +45,7 @@ const backendUrl = import.meta.env.VITE_BACKEND_URL || "http://localhost:8000";
 const defaultChannels = Array.from({ length: 64 }, (_, index) => index);
 const defaultSnapshot: Snapshot = {
   window_s: 10,
+  sample_s: 10,
   t_start_us: 0,
   t_end_us: 0,
   channels: defaultChannels,
@@ -144,6 +148,7 @@ const normalizeSnapshot = (data?: Partial<Snapshot>) => {
 
   return {
     window_s: Number.isFinite(data.window_s) ? data.window_s! : defaultSnapshot.window_s,
+    sample_s: Number.isFinite(data.sample_s) ? data.sample_s! : defaultSnapshot.sample_s,
     t_start_us: Number.isFinite(data.t_start_us) ? data.t_start_us! : defaultSnapshot.t_start_us,
     t_end_us: Number.isFinite(data.t_end_us) ? data.t_end_us! : defaultSnapshot.t_end_us,
     channels,
@@ -173,6 +178,7 @@ const normalizeSnapshot = (data?: Partial<Snapshot>) => {
 
 const normalizeStatus = (data?: Partial<Status>) => ({
   running: Boolean(data?.running),
+  paused: Boolean(data?.paused),
   connected: Boolean(data?.connected),
   last_error: data?.last_error ?? null,
 });
@@ -190,7 +196,7 @@ const getModeYAxisMax = (snapshot: Snapshot, mode: MultiChannelPlotMode, channel
 };
 
 function App({ viewMode = "dashboard" }: { viewMode?: ViewMode }) {
-  const [status, setStatus] = useState<Status>({ running: false, connected: false });
+  const [status, setStatus] = useState<Status>({ running: false, paused: false, connected: false });
   const [snapshot, setSnapshot] = useState<Snapshot>(defaultSnapshot);
   const [lastStatusAt, setLastStatusAt] = useState<Date | null>(null);
   const [lastSnapshotAt, setLastSnapshotAt] = useState<Date | null>(null);
@@ -202,6 +208,7 @@ function App({ viewMode = "dashboard" }: { viewMode?: ViewMode }) {
   const [savingSettings, setSavingSettings] = useState(false);
   const [settings, setSettings] = useState<BackendConfig>({
     window_s: 10,
+    sample_s: 2,
     channels: 64,
     limits: {
       min_window_s: 1,
@@ -232,12 +239,13 @@ function App({ viewMode = "dashboard" }: { viewMode?: ViewMode }) {
       fetch(`${backendUrl}/config`)
         .then((res) => res.json())
         .then((data: BackendConfig) => {
-          if (!Number.isFinite(data.window_s) || !Number.isFinite(data.channels)) {
+          if (!Number.isFinite(data.window_s) || !Number.isFinite(data.sample_s) || !Number.isFinite(data.channels)) {
             return;
           }
           setSettings((prev) => ({
             ...prev,
             window_s: data.window_s,
+            sample_s: data.sample_s,
             channels: 64,
             limits: data.limits ?? prev.limits,
           }));
@@ -260,7 +268,7 @@ function App({ viewMode = "dashboard" }: { viewMode?: ViewMode }) {
     fetchSnapshot();
 
     const statusTimer = setInterval(fetchStatus, 2000);
-    const snapshotTimer = setInterval(fetchSnapshot, 10000);
+    const snapshotTimer = setInterval(fetchSnapshot, 1000);
 
     return () => {
       clearInterval(statusTimer);
@@ -320,6 +328,8 @@ function App({ viewMode = "dashboard" }: { viewMode?: ViewMode }) {
 
   const startAcq = () => fetch(`${backendUrl}/start`, { method: "POST" });
   const stopAcq = () => fetch(`${backendUrl}/stop`, { method: "POST" });
+  const pauseAcq = () => fetch(`${backendUrl}/pause`, { method: "POST" });
+  const resumeAcq = () => fetch(`${backendUrl}/resume`, { method: "POST" });
 
   const saveSettings = async () => {
     setSavingSettings(true);
@@ -330,6 +340,7 @@ function App({ viewMode = "dashboard" }: { viewMode?: ViewMode }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           window_s: Math.round(settings.window_s),
+          sample_s: Math.round(settings.sample_s),
           channels: 64,
         }),
       });
@@ -341,6 +352,7 @@ function App({ viewMode = "dashboard" }: { viewMode?: ViewMode }) {
       setSettings((prev) => ({
         ...prev,
         window_s: payload.window_s,
+        sample_s: payload.sample_s,
         channels: 64,
       }));
       const freshSnapshot = await fetch(`${backendUrl}/snapshot`).then((res) => res.json());
@@ -375,6 +387,11 @@ function App({ viewMode = "dashboard" }: { viewMode?: ViewMode }) {
               <button onClick={stopAcq} disabled={!status.running}>
                 Stop
               </button>
+              {status.running ? (
+                <button onClick={status.paused ? resumeAcq : pauseAcq}>
+                  {status.paused ? "Resume" : "Pause"}
+                </button>
+              ) : null}
             </div>
             <div className="status">
               <span className={status.connected ? "dot ok" : "dot warn"} />
@@ -382,6 +399,11 @@ function App({ viewMode = "dashboard" }: { viewMode?: ViewMode }) {
               <span className={status.running ? "pill running" : "pill stopped"}>
                 {status.running ? "Running" : "Stopped"}
               </span>
+              {status.running ? (
+                <span className={status.paused ? "pill stopped" : "pill running"}>
+                  {status.paused ? "Paused" : "Active"}
+                </span>
+              ) : null}
               <button
                 type="button"
                 className="status-open-monitor"
@@ -413,6 +435,18 @@ function App({ viewMode = "dashboard" }: { viewMode?: ViewMode }) {
                 }
               />
             </label>
+            <label>
+              <span>Sampling Interval (s)</span>
+              <input
+                type="number"
+                min={1}
+                max={Math.max(1, Math.round(settings.window_s || 1))}
+                value={settings.sample_s}
+                onChange={(event) =>
+                  setSettings((prev) => ({ ...prev, sample_s: Number(event.target.value) }))
+                }
+              />
+            </label>
             <button type="button" onClick={saveSettings} disabled={status.running || savingSettings}>
               {savingSettings ? "Saving..." : "Apply"}
             </button>
@@ -427,7 +461,7 @@ function App({ viewMode = "dashboard" }: { viewMode?: ViewMode }) {
             <div>
               <h2>Rate (Hz) per Channel</h2>
               <p className="subtitle">
-                {channels.length} channels · linear scale · auto max ({formatRateMax(countsMax)} Hz)
+                {channels.length} channels · accumulated in window · linear scale · auto max ({formatRateMax(countsMax)} Hz)
               </p>
             </div>
           </div>
@@ -451,7 +485,7 @@ function App({ viewMode = "dashboard" }: { viewMode?: ViewMode }) {
           <div className="panel-header">
             <div>
               <h2>Rate Map (Hz)</h2>
-              <p className="subtitle">8×8 channels · Aggregation Window: {snapshot.window_s}s</p>
+              <p className="subtitle">8×8 channels · last sample interval: {snapshot.sample_s}s</p>
             </div>
           </div>
           <RateMapPanel
@@ -467,7 +501,7 @@ function App({ viewMode = "dashboard" }: { viewMode?: ViewMode }) {
             <div>
               <h2>Histograms + Instant Rate Trend</h2>
               <p className="subtitle">
-                4 channels view · Aggregation Window: {snapshot.window_s}s · {snapshot.t_start_us} →{" "}
+                4 channels view · accumulated in window ({snapshot.window_s}s) · {snapshot.t_start_us} →{" "}
                 {snapshot.t_end_us} μs
               </p>
               {recentChannels.length > 0 ? (
@@ -501,7 +535,7 @@ function App({ viewMode = "dashboard" }: { viewMode?: ViewMode }) {
             <span>adc_gbot</span>
             <span>rate vs time</span>
           </div>
-          <p className="plot-caption">Y: Counts (per window) • X: ADC units • Trend: Rate (Hz) vs Time (windows)</p>
+          <p className="plot-caption">Y: Counts (accumulated in window) • X: ADC units • Trend: Rate (Hz) per sample interval</p>
           <div className="hist-table">
             {visibleHistogramChannels.map((ch, rowIndex) => {
               const isLastRow = rowIndex === visibleHistogramChannels.length - 1;
@@ -599,10 +633,10 @@ function MonitorWall({
   const focusedYAxisMax = lockedYAxisByMode[focusedMode];
 
   const modeMeta: Record<MultiChannelPlotMode, { title: string; subtitle: string }> = {
-    adc_x: { title: "ADC_X", subtitle: "Histogram of counts vs ADC units" },
-    adc_gtop: { title: "ADC_GTOP", subtitle: "Histogram of counts vs ADC units" },
-    adc_gbot: { title: "ADC_GBOT", subtitle: "Histogram of counts vs ADC units" },
-    rate_vs_time: { title: "Rate vs Time", subtitle: "Line series in Hz over rolling windows" },
+    adc_x: { title: "ADC_X", subtitle: "Histogram accumulated in window" },
+    adc_gtop: { title: "ADC_GTOP", subtitle: "Histogram accumulated in window" },
+    adc_gbot: { title: "ADC_GBOT", subtitle: "Histogram accumulated in window" },
+    rate_vs_time: { title: "Rate vs Time", subtitle: "Line series in Hz per sample interval" },
   };
 
   const openFocusedChart = (index: number) => {
