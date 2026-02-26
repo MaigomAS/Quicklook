@@ -17,13 +17,17 @@ from pydantic import BaseModel
 @dataclass
 class AggregationWindow:
     window_s: int
+    sample_s: int
     t_start_us: int = 0
     t_end_us: int = 0
     counts_by_channel: Dict[int, int] = field(default_factory=dict)
     hist_adc_x: Dict[int, List[int]] = field(default_factory=dict)
     hist_adc_gtop: Dict[int, List[int]] = field(default_factory=dict)
     hist_adc_gbot: Dict[int, List[int]] = field(default_factory=dict)
+    sample_counts_by_channel: Dict[int, int] = field(default_factory=dict)
     notes: List[str] = field(default_factory=list)
+    sample_t_start_us: int = 0
+    sample_t_end_us: int = 0
 
     def reset(self) -> None:
         self.t_start_us = 0
@@ -32,7 +36,10 @@ class AggregationWindow:
         self.hist_adc_x.clear()
         self.hist_adc_gtop.clear()
         self.hist_adc_gbot.clear()
+        self.sample_counts_by_channel.clear()
         self.notes.clear()
+        self.sample_t_start_us = 0
+        self.sample_t_end_us = 0
 
 
 @dataclass
@@ -40,12 +47,14 @@ class AcquisitionState:
     sim_host: str
     sim_port: int
     window_s: int
+    sample_s: int
     channels: int
     mode: str
     record_path: Optional[str]
     replay_path: Optional[str]
     replay_speed: float
     running: bool = False
+    paused: bool = False
     connected: bool = False
     last_error: Optional[str] = None
     latest_snapshot: Optional[dict] = None
@@ -64,11 +73,12 @@ class AcquisitionState:
     )
 
     def __post_init__(self) -> None:
-        self.window = AggregationWindow(window_s=self.window_s)
+        self.window = AggregationWindow(window_s=self.window_s, sample_s=self.sample_s)
 
 
 class ConfigUpdateRequest(BaseModel):
     window_s: Optional[int] = None
+    sample_s: Optional[int] = None
     channels: Optional[int] = None
 
 
@@ -86,10 +96,16 @@ def adc_to_bin(adc: int) -> int:
     return min(63, adc // 64)
 
 
-def empty_snapshot(window_s: int, channels: int) -> dict:
+
+def default_sample_s(window_s: int) -> int:
+    return max(1, round(window_s / 5))
+
+
+def empty_snapshot(window_s: int, sample_s: int, channels: int) -> dict:
     channel_ids = list(range(channels))
     return {
         "window_s": window_s,
+        "sample_s": sample_s,
         "t_start_us": 0,
         "t_end_us": 0,
         "channels": channel_ids,
@@ -124,20 +140,26 @@ def build_snapshot(
     }
 
     ratemap = [[0.0 for _ in range(8)] for _ in range(8)]
-    for ch, count in counts_by_channel.items():
+    sample_duration_s = max(window.sample_s, 1)
+    for ch, count in window.sample_counts_by_channel.items():
         channel = int(ch)
-        rate = count / float(window.window_s)
+        rate = count / float(sample_duration_s)
         rate_history.setdefault(channel, deque(maxlen=30)).append(rate)
 
-    rate_history_t_end_us.append(window.t_end_us)
-    while len(rate_history_t_end_us) > 30:
-        rate_history_t_end_us.popleft()
+    for ch in counts_by_channel:
+        channel = int(ch)
+        rate_history.setdefault(channel, deque(maxlen=30))
 
-    for ch, count in window.counts_by_channel.items():
+    if window.sample_t_end_us > 0:
+        rate_history_t_end_us.append(window.sample_t_end_us)
+        while len(rate_history_t_end_us) > 30:
+            rate_history_t_end_us.popleft()
+
+    for ch, count in window.sample_counts_by_channel.items():
         row = ch // 8
         col = ch % 8
         if row < 8 and col < 8:
-            ratemap[row][col] = count / float(window.window_s)
+            ratemap[row][col] = count / float(sample_duration_s)
 
     histograms = {
         "adc_x": {
@@ -156,6 +178,7 @@ def build_snapshot(
 
     return {
         "window_s": window.window_s,
+        "sample_s": window.sample_s,
         "t_start_us": window.t_start_us,
         "t_end_us": window.t_end_us,
         "channels": channel_ids,
@@ -190,6 +213,8 @@ def process_event(state: AcquisitionState, event: dict) -> None:
         return
 
     with state.lock:
+        if state.paused:
+            return
         if t_us <= 0:
             state.quality["invalid_fields"] += 1
             state.quality["invalid_fields"] += 1
@@ -201,14 +226,17 @@ def process_event(state: AcquisitionState, event: dict) -> None:
 
         if state.window.t_start_us == 0:
             state.window.t_start_us = t_us
+            state.window.sample_t_start_us = t_us
         state.window.t_end_us = t_us
+        state.window.sample_t_end_us = t_us
         state.window.counts_by_channel[channel] = state.window.counts_by_channel.get(channel, 0) + 1
+        state.window.sample_counts_by_channel[channel] = state.window.sample_counts_by_channel.get(channel, 0) + 1
 
         ensure_hist(state.window.hist_adc_x, channel)[adc_to_bin(adc_x)] += 1
         ensure_hist(state.window.hist_adc_gtop, channel)[adc_to_bin(adc_gtop)] += 1
         ensure_hist(state.window.hist_adc_gbot, channel)[adc_to_bin(adc_gbot)] += 1
 
-        if state.window.t_end_us - state.window.t_start_us >= state.window.window_s * 1_000_000:
+        if state.window.sample_t_end_us - state.window.sample_t_start_us >= state.window.sample_s * 1_000_000:
             state.latest_snapshot = build_snapshot(
                 state.window,
                 state.channels,
@@ -216,6 +244,11 @@ def process_event(state: AcquisitionState, event: dict) -> None:
                 state.rate_history_t_end_us,
                 state.quality,
             )
+
+            state.window.sample_counts_by_channel.clear()
+            state.window.sample_t_start_us = state.window.sample_t_end_us
+
+        if state.window.t_end_us - state.window.t_start_us >= state.window.window_s * 1_000_000:
             state.window.reset()
 
 
@@ -275,6 +308,7 @@ def run_replay(state: AcquisitionState) -> None:
 def run_acquisition(state: AcquisitionState) -> None:
     state.stop_event.clear()
     state.last_error = None
+    state.paused = False
     state.window.reset()
     state.rate_history = {}
     state.rate_history_t_end_us = deque(maxlen=30)
@@ -331,10 +365,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+initial_window_s = int(os.getenv("WINDOW_S", "10"))
+initial_sample_s = int(os.getenv("SAMPLE_S", str(default_sample_s(initial_window_s))))
+initial_sample_s = max(1, min(initial_sample_s, initial_window_s))
+
 state = AcquisitionState(
     sim_host=os.getenv("SIM_HOST", "127.0.0.1"),
     sim_port=int(os.getenv("SIM_PORT", "9001")),
-    window_s=int(os.getenv("WINDOW_S", "10")),
+    window_s=initial_window_s,
+    sample_s=initial_sample_s,
     channels=int(os.getenv("CHANNELS", "64")),
     mode=os.getenv("QUICKLOOK_MODE", MODE_LIVE),
     record_path=os.getenv("QUICKLOOK_RECORD_PATH"),
@@ -346,28 +385,47 @@ state = AcquisitionState(
 @app.post("/start")
 def start_acquisition() -> dict:
     if state.running:
-        return {"running": True, "connected": state.connected}
+        return {"running": True, "paused": state.paused, "connected": state.connected}
     state.running = True
+    state.paused = False
     state.thread = threading.Thread(target=run_acquisition, args=(state,), daemon=True)
     state.thread.start()
-    return {"running": True, "connected": state.connected}
+    return {"running": True, "paused": state.paused, "connected": state.connected}
 
 
 @app.post("/stop")
 def stop_acquisition() -> dict:
     if not state.running:
-        return {"running": False, "connected": state.connected}
+        return {"running": False, "paused": state.paused, "connected": state.connected}
     state.stop_event.set()
     if state.thread and state.thread.is_alive():
         state.thread.join(timeout=2)
     state.running = False
-    return {"running": False, "connected": state.connected}
+    state.paused = False
+    return {"running": False, "paused": state.paused, "connected": state.connected}
+
+
+@app.post("/pause")
+def pause_acquisition() -> dict:
+    if not state.running:
+        return {"running": False, "paused": state.paused, "connected": state.connected}
+    state.paused = True
+    return {"running": state.running, "paused": state.paused, "connected": state.connected}
+
+
+@app.post("/resume")
+def resume_acquisition() -> dict:
+    if not state.running:
+        return {"running": False, "paused": state.paused, "connected": state.connected}
+    state.paused = False
+    return {"running": state.running, "paused": state.paused, "connected": state.connected}
 
 
 @app.get("/status")
 def get_status() -> dict:
     return {
         "running": state.running,
+        "paused": state.paused,
         "connected": state.connected,
         "last_error": state.last_error,
         "mode": state.mode,
@@ -382,7 +440,7 @@ def get_snapshot() -> dict:
     with state.lock:
         if state.latest_snapshot:
             return state.latest_snapshot
-    return empty_snapshot(state.window_s, state.channels)
+    return empty_snapshot(state.window_s, state.sample_s, state.channels)
 
 
 @app.get("/config")
@@ -391,6 +449,7 @@ def get_config() -> dict:
         "sim_host": state.sim_host,
         "sim_port": state.sim_port,
         "window_s": state.window_s,
+        "sample_s": state.sample_s,
         "channels": state.channels,
         "mode": state.mode,
         "record_path": state.record_path,
@@ -401,6 +460,7 @@ def get_config() -> dict:
             "max_window_s": MAX_WINDOW_S,
             "min_channels": MIN_CHANNELS,
             "max_channels": MAX_CHANNELS,
+            "min_sample_s": 1,
         },
     }
 
@@ -410,10 +470,13 @@ def update_config(request: ConfigUpdateRequest) -> dict:
     if state.running:
         raise HTTPException(status_code=409, detail="stop acquisition before updating config")
 
-    if request.window_s is None and request.channels is None:
+    if request.window_s is None and request.sample_s is None and request.channels is None:
         raise HTTPException(status_code=400, detail="no settings provided")
 
     next_window_s = state.window_s if request.window_s is None else request.window_s
+    next_sample_s = state.sample_s if request.sample_s is None else request.sample_s
+    if request.sample_s is None and request.window_s is not None and next_sample_s > next_window_s:
+        next_sample_s = default_sample_s(next_window_s)
     next_channels = state.channels if request.channels is None else request.channels
 
     if next_window_s < MIN_WINDOW_S or next_window_s > MAX_WINDOW_S:
@@ -426,18 +489,26 @@ def update_config(request: ConfigUpdateRequest) -> dict:
             status_code=422,
             detail=f"channels must be between {MIN_CHANNELS} and {MAX_CHANNELS}",
         )
+    if next_sample_s < 1 or next_sample_s > next_window_s:
+        raise HTTPException(
+            status_code=422,
+            detail="sample_s must be between 1 and window_s",
+        )
 
     with state.lock:
         state.window_s = next_window_s
+        state.sample_s = next_sample_s
         state.channels = next_channels
         state.window.window_s = next_window_s
+        state.window.sample_s = next_sample_s
         state.window.reset()
-        state.latest_snapshot = empty_snapshot(state.window_s, state.channels)
+        state.latest_snapshot = empty_snapshot(state.window_s, state.sample_s, state.channels)
         state.rate_history = {}
         state.rate_history_t_end_us = deque(maxlen=30)
 
     return {
         "ok": True,
         "window_s": state.window_s,
+        "sample_s": state.sample_s,
         "channels": state.channels,
     }
