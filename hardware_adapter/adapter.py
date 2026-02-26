@@ -229,12 +229,36 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--tcp-server", type=parse_host_port, help="serve NDJSON as TCP server host:port")
     parser.add_argument("--tcp-client", type=parse_host_port, help="push NDJSON to remote host:port")
     parser.add_argument(
+        "--no-data",
+        choices=["keep", "drop"],
+        default="drop",
+        help="handling policy for decoded flags.no_data events (default: drop)",
+    )
+    parser.add_argument(
+        "--drop-no-data",
+        action="store_true",
+        help="equivalent to --no-data drop",
+    )
+    parser.add_argument(
+        "--include-no-data",
+        action="store_true",
+        help="override policy and keep no_data events for debugging",
+    )
+    parser.add_argument(
         "--unwrap-threshold-ticks",
         type=int,
         default=1_000_000,
         help="backward jump threshold before applying +10,000,000 tick PPS unwrap",
     )
     return parser.parse_args()
+
+
+def keep_no_data_events(args: argparse.Namespace) -> bool:
+    if args.include_no_data:
+        return True
+    if args.drop_no_data:
+        return False
+    return args.no_data == "keep"
 
 
 def main() -> int:
@@ -253,8 +277,12 @@ def main() -> int:
     )
 
     decode_state = DecoderState()
-    emitted = 0
-    dropped = 0
+    emitted_total = 0
+    emitted_hits = 0
+    dropped_no_data = 0
+    dropped_no_channel = 0
+    keep_no_data = keep_no_data_events(args)
+    print(f"[adapter] no_data policy: {'keep' if keep_no_data else 'drop'}", file=sys.stderr)
 
     try:
         source = open(args.file, "rb") if args.input == "file" else sys.stdin.buffer
@@ -262,15 +290,27 @@ def main() -> int:
             for raw_id, word in iter_subrecords_from_binary(source):
                 event = build_event(raw_id, word, mapper, decode_state, args.unwrap_threshold_ticks)
                 if event is None:
-                    dropped += 1
+                    dropped_no_channel += 1
+                    continue
+                if event["flags"]["no_data"] and not keep_no_data:
+                    dropped_no_data += 1
                     continue
                 line = (json.dumps(event, separators=(",", ":")) + "\n").encode("utf-8")
                 fanout.emit(line)
-                emitted += 1
+                emitted_total += 1
+                if not event["flags"]["no_data"]:
+                    emitted_hits += 1
     finally:
         fanout.close()
 
-    print(f"[adapter] done. emitted={emitted} dropped={dropped}", file=sys.stderr)
+    print(
+        "[adapter] done. "
+        f"emitted_hits={emitted_hits} "
+        f"dropped_no_data={dropped_no_data} "
+        f"emitted_total={emitted_total} "
+        f"dropped_no_channel={dropped_no_channel}",
+        file=sys.stderr,
+    )
     print(f"[adapter] final mapping: {mapper.describe()}", file=sys.stderr)
     return 0
 
