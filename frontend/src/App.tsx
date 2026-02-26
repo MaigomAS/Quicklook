@@ -170,7 +170,10 @@ const normalizeStatus = (data?: Partial<Status>) => ({
   last_error: data?.last_error ?? null,
 });
 
-function App() {
+type ViewMode = "dashboard" | "monitor";
+type MultiChannelPlotMode = "adc_x" | "adc_gtop" | "adc_gbot" | "rate_vs_time";
+
+function App({ viewMode = "dashboard" }: { viewMode?: ViewMode }) {
   const [status, setStatus] = useState<Status>({ running: false, connected: false });
   const [snapshot, setSnapshot] = useState<Snapshot>(defaultSnapshot);
   const [lastStatusAt, setLastStatusAt] = useState<Date | null>(null);
@@ -334,6 +337,16 @@ function App() {
     }
   };
 
+  const openMonitorWindow = () => {
+    const monitorUrl = new URL(window.location.href);
+    monitorUrl.searchParams.set("view", "monitor");
+    window.open(monitorUrl.toString(), "quicklook-monitor", "popup=yes,width=1640,height=980");
+  };
+
+  if (viewMode === "monitor") {
+    return <MonitorWall snapshot={snapshot} status={status} />;
+  }
+
   return (
     <div className="app">
       <header className="top-bar">
@@ -353,6 +366,14 @@ function App() {
               <span className={status.running ? "pill running" : "pill stopped"}>
                 {status.running ? "Running" : "Stopped"}
               </span>
+              <button
+                type="button"
+                className="status-open-monitor"
+                onClick={openMonitorWindow}
+                title="Open the secondary monitor wall in a separate window"
+              >
+                Open Monitor Wall ↗
+              </button>
               {lastStatusAt ? (
                 <span className="timestamp">Status: {lastStatusAt.toLocaleTimeString()}</span>
               ) : null}
@@ -529,6 +550,238 @@ function App() {
         hasData={channelHasData}
         onClose={closeModal}
       />
+    </div>
+  );
+}
+
+function MonitorWall({
+  snapshot,
+  status,
+}: {
+  snapshot: Snapshot;
+  status: Status;
+}) {
+  const [plotMode, setPlotMode] = useState<MultiChannelPlotMode>("adc_x");
+  const [focusedChannelIndex, setFocusedChannelIndex] = useState<number | null>(null);
+  const [focusedMode, setFocusedMode] = useState<MultiChannelPlotMode>("adc_x");
+  const channels = snapshot.channels.length > 0 ? snapshot.channels : defaultChannels;
+
+  const modeMeta: Record<MultiChannelPlotMode, { title: string; subtitle: string }> = {
+    adc_x: { title: "ADC_X", subtitle: "Histogram of counts vs ADC units" },
+    adc_gtop: { title: "ADC_GTOP", subtitle: "Histogram of counts vs ADC units" },
+    adc_gbot: { title: "ADC_GBOT", subtitle: "Histogram of counts vs ADC units" },
+    rate_vs_time: { title: "Rate vs Time", subtitle: "Line series in Hz over rolling windows" },
+  };
+
+  const openFocusedChart = (index: number) => {
+    setFocusedChannelIndex(index);
+    setFocusedMode(plotMode);
+  };
+
+  const closeFocusedChart = () => {
+    setFocusedChannelIndex(null);
+  };
+
+  const goToPreviousChannel = () => {
+    if (focusedChannelIndex === null) {
+      return;
+    }
+    const previousIndex = (focusedChannelIndex - 1 + channels.length) % channels.length;
+    setFocusedChannelIndex(previousIndex);
+  };
+
+  const goToNextChannel = () => {
+    if (focusedChannelIndex === null) {
+      return;
+    }
+    const nextIndex = (focusedChannelIndex + 1) % channels.length;
+    setFocusedChannelIndex(nextIndex);
+  };
+
+  const focusedChannel = focusedChannelIndex === null ? null : channels[focusedChannelIndex];
+
+  return (
+    <div className="monitor-app">
+      <header className="monitor-header">
+        <div>
+          <p className="monitor-kicker">Quicklook Monitor Window</p>
+          <h1>64-Channel Multi-Plot Wall</h1>
+          <p>
+            Live secondary display for operations · {channels.length} detected channels · {modeMeta[plotMode].title}
+          </p>
+        </div>
+        <div className="monitor-controls">
+          <label>
+            Visualization Mode
+            <select value={plotMode} onChange={(event) => setPlotMode(event.target.value as MultiChannelPlotMode)}>
+              <option value="adc_x">All ADC_X</option>
+              <option value="adc_gtop">All ADC_GTOP</option>
+              <option value="adc_gbot">All ADC_GBOT</option>
+              <option value="rate_vs_time">All Rate vs Time</option>
+            </select>
+          </label>
+          <div className="monitor-status-pill">
+            <span className={status.connected ? "dot ok" : "dot warn"} />
+            <strong>{status.connected ? "Connected" : "Disconnected"}</strong>
+            <span className={status.running ? "pill running" : "pill stopped"}>{status.running ? "Running" : "Stopped"}</span>
+          </div>
+        </div>
+      </header>
+
+      <section className="monitor-meta-card">
+        <span>{modeMeta[plotMode].subtitle}</span>
+        <span>
+          Window: {snapshot.window_s}s · Snapshot range: {snapshot.t_start_us} → {snapshot.t_end_us} μs
+        </span>
+      </section>
+
+      <main className="monitor-grid">
+        {channels.map((channel, index) => {
+          const isRate = plotMode === "rate_vs_time";
+          const chartData = isRate
+            ? snapshot.rate_history[String(channel)] ?? []
+            : snapshot.histograms[plotMode][String(channel)] ?? Array(64).fill(0);
+
+          return (
+            <article
+              key={channel}
+              className="monitor-card"
+              onClick={() => openFocusedChart(index)}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  openFocusedChart(index);
+                }
+              }}
+            >
+              <div className="monitor-card-header">
+                <h3>Channel {channel}</h3>
+                <span>{(snapshot.counts_by_channel[String(channel)] ?? 0).toFixed(2)} Hz</span>
+              </div>
+              <div className="monitor-card-chart">
+                {isRate ? (
+                  <MiniPlotChart kind="line" data={chartData} showXAxisLabel showYAxisLabel />
+                ) : (
+                  <MiniPlotChart kind="histogram" data={chartData} showXAxisLabel showYAxisLabel />
+                )}
+              </div>
+            </article>
+          );
+        })}
+      </main>
+
+      <MonitorChartModal
+        open={focusedChannel !== null}
+        channel={focusedChannel}
+        mode={focusedMode}
+        onChangeMode={setFocusedMode}
+        countsHz={focusedChannel === null ? 0 : snapshot.counts_by_channel[String(focusedChannel)] ?? 0}
+        adcX={focusedChannel === null ? [] : snapshot.histograms.adc_x[String(focusedChannel)] ?? []}
+        adcGtop={focusedChannel === null ? [] : snapshot.histograms.adc_gtop[String(focusedChannel)] ?? []}
+        adcGbot={focusedChannel === null ? [] : snapshot.histograms.adc_gbot[String(focusedChannel)] ?? []}
+        rateTrend={focusedChannel === null ? [] : snapshot.rate_history[String(focusedChannel)] ?? []}
+        onClose={closeFocusedChart}
+        onPrevious={goToPreviousChannel}
+        onNext={goToNextChannel}
+      />
+    </div>
+  );
+}
+
+function MonitorChartModal({
+  open,
+  channel,
+  mode,
+  onChangeMode,
+  countsHz,
+  adcX,
+  adcGtop,
+  adcGbot,
+  rateTrend,
+  onClose,
+  onPrevious,
+  onNext,
+}: {
+  open: boolean;
+  channel: number | null;
+  mode: MultiChannelPlotMode;
+  onChangeMode: (mode: MultiChannelPlotMode) => void;
+  countsHz: number;
+  adcX: number[];
+  adcGtop: number[];
+  adcGbot: number[];
+  rateTrend: number[];
+  onClose: () => void;
+  onPrevious: () => void;
+  onNext: () => void;
+}) {
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        onClose();
+      }
+      if (event.key === "ArrowLeft") {
+        onPrevious();
+      }
+      if (event.key === "ArrowRight") {
+        onNext();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onClose, onNext, onPrevious, open]);
+
+  if (!open || channel === null) {
+    return null;
+  }
+
+  const isRate = mode === "rate_vs_time";
+  const chartData =
+    mode === "adc_x" ? adcX : mode === "adc_gtop" ? adcGtop : mode === "adc_gbot" ? adcGbot : rateTrend;
+
+  return (
+    <div className="monitor-modal-overlay" role="dialog" aria-modal="true" onClick={onClose}>
+      <article className="monitor-modal" onClick={(event) => event.stopPropagation()}>
+        <button type="button" className="monitor-modal-close" onClick={onClose}>
+          ×
+        </button>
+        <header className="monitor-modal-header">
+          <div>
+            <h2>Channel {channel}</h2>
+            <p>{countsHz.toFixed(2)} Hz · Expanded monitor view</p>
+          </div>
+          <label>
+            Visualization Mode
+            <select value={mode} onChange={(event) => onChangeMode(event.target.value as MultiChannelPlotMode)}>
+              <option value="adc_x">ADC_X</option>
+              <option value="adc_gtop">ADC_GTOP</option>
+              <option value="adc_gbot">ADC_GBOT</option>
+              <option value="rate_vs_time">Rate vs Time</option>
+            </select>
+          </label>
+        </header>
+        <div className="monitor-modal-chart">
+          {isRate ? (
+            <MiniPlotChart kind="line" data={chartData} showXAxisLabel showYAxisLabel />
+          ) : (
+            <MiniPlotChart kind="histogram" data={chartData} showXAxisLabel showYAxisLabel />
+          )}
+        </div>
+        <footer className="monitor-modal-footer">
+          <button type="button" onClick={onPrevious}>
+            ← Previous
+          </button>
+          <span>Use ← / → keys to navigate</span>
+          <button type="button" onClick={onNext}>
+            Next →
+          </button>
+        </footer>
+      </article>
     </div>
   );
 }
