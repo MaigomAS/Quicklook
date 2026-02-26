@@ -1,4 +1,4 @@
-.PHONY: simulator backend monitor live record replay
+.PHONY: simulator backend monitor live record replay hardware-adapter
 
 simulator:
 	gcc -O2 -std=c11 -Wall -Wextra -o simulator/simulator simulator/src/main.c simulator/src/jsmn.c
@@ -17,3 +17,7 @@ record:
 
 replay:
 	tools/scripts/run_replay.sh
+
+
+hardware-adapter:
+	python3 hardware_adapter/adapter.py --help
