@@ -9,7 +9,7 @@ type Props = {
   windowS: number;
   tStartUs: number;
   tEndUs: number;
-  rateHz: number;
+  countsInWindow: number;
   adcX: number[];
   adcGtop: number[];
   adcGbot: number[];
@@ -76,7 +76,7 @@ export function ChannelDetailModal({
   windowS,
   tStartUs,
   tEndUs,
-  rateHz,
+  countsInWindow,
   adcX,
   adcGtop,
   adcGbot,
@@ -110,15 +110,15 @@ export function ChannelDetailModal({
         <header className="channel-modal-header">
           <h3>Channel ch {channel}</h3>
           <p>
-            window: {windowS}s · {tStartUs} → {tEndUs} us · rate: {rateHz.toFixed(2)} Hz
+            window: {windowS}s · {tStartUs} → {tEndUs} us · counts in window: {countsInWindow.toFixed(0)}
           </p>
           {!hasData ? <span className="channel-modal-empty">No data for this channel in current window</span> : null}
         </header>
         <div className="channel-modal-grid">
-          <PlotCard title="adc_x histogram" type="histogram" data={adcX} />
-          <PlotCard title="adc_gtop histogram" type="histogram" data={adcGtop} />
-          <PlotCard title="adc_gbot histogram" type="histogram" data={adcGbot} />
-          <PlotCard title="rate vs time trend" type="line" data={rateTrend} />
+          <PlotCard title="ADC_X Spectrum (accumulated in window)" type="histogram" data={adcX} />
+          <PlotCard title="ADC_GTOP Spectrum (accumulated in window)" type="histogram" data={adcGtop} />
+          <PlotCard title="ADC_GBOT Spectrum (accumulated in window)" type="histogram" data={adcGbot} />
+          <PlotCard title="Rate Trend (Hz)" type="line" data={rateTrend} />
         </div>
       </div>
     </div>,

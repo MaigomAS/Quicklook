@@ -324,7 +324,7 @@ function App({ viewMode = "dashboard" }: { viewMode?: ViewMode }) {
 
   const channelHasData = selectedChannel !== null && snapshot.channels.includes(selectedChannel);
   const modalChannel = selectedChannel ?? 0;
-  const modalRate = snapshot.counts_by_channel[String(modalChannel)] ?? 0;
+  const modalCounts = snapshot.counts_by_channel[String(modalChannel)] ?? 0;
 
   const startAcq = () => fetch(`${backendUrl}/start`, { method: "POST" });
   const stopAcq = () => fetch(`${backendUrl}/stop`, { method: "POST" });
@@ -459,9 +459,9 @@ function App({ viewMode = "dashboard" }: { viewMode?: ViewMode }) {
         <section className="panel counts-panel">
           <div className="panel-header">
             <div>
-              <h2>Rate (Hz) per Channel</h2>
+              <h2>Counts per Channel (accumulated in window)</h2>
               <p className="subtitle">
-                {channels.length} channels · accumulated in window · linear scale · auto max ({formatRateMax(countsMax)} Hz)
+                Updated every {snapshot.sample_s}s, resets every {snapshot.window_s}s · {channels.length} channels · linear scale · auto max ({formatRateMax(countsMax)} counts)
               </p>
             </div>
           </div>
@@ -479,13 +479,14 @@ function App({ viewMode = "dashboard" }: { viewMode?: ViewMode }) {
               );
             })}
           </div>
+          <p className="plot-caption">Y-axis: Counts • X-axis: Channel</p>
         </section>
 
         <section className="panel rate-panel">
           <div className="panel-header">
             <div>
               <h2>Rate Map (Hz)</h2>
-              <p className="subtitle">8×8 channels · last sample interval: {snapshot.sample_s}s</p>
+              <p className="subtitle">Last sampling interval ({snapshot.sample_s}s)</p>
             </div>
           </div>
           <RateMapPanel
@@ -530,12 +531,12 @@ function App({ viewMode = "dashboard" }: { viewMode?: ViewMode }) {
           </div>
           <div className="hist-row header">
             <span>Channel</span>
-            <span>adc_x</span>
-            <span>adc_gtop</span>
-            <span>adc_gbot</span>
-            <span>rate vs time</span>
+            <span>ADC_X Spectrum (accumulated in window)</span>
+            <span>ADC_GTOP Spectrum (accumulated in window)</span>
+            <span>ADC_GBOT Spectrum (accumulated in window)</span>
+            <span>Rate Trend (Hz)</span>
           </div>
-          <p className="plot-caption">Y: Counts (accumulated in window) • X: ADC units • Trend: Rate (Hz) per sample interval</p>
+          <p className="plot-caption">ADC spectra: X-axis = ADC units, Y-axis = Counts • Trend: X-axis = Time, Y-axis = Rate [Hz] (per sampling interval)</p>
           <div className="hist-table">
             {visibleHistogramChannels.map((ch, rowIndex) => {
               const isLastRow = rowIndex === visibleHistogramChannels.length - 1;
@@ -592,7 +593,7 @@ function App({ viewMode = "dashboard" }: { viewMode?: ViewMode }) {
         windowS={snapshot.window_s}
         tStartUs={snapshot.t_start_us}
         tEndUs={snapshot.t_end_us}
-        rateHz={modalRate}
+        countsInWindow={modalCounts}
         adcX={snapshot.histograms.adc_x[String(modalChannel)] ?? Array(64).fill(0)}
         adcGtop={snapshot.histograms.adc_gtop[String(modalChannel)] ?? Array(64).fill(0)}
         adcGbot={snapshot.histograms.adc_gbot[String(modalChannel)] ?? Array(64).fill(0)}
@@ -633,10 +634,10 @@ function MonitorWall({
   const focusedYAxisMax = lockedYAxisByMode[focusedMode];
 
   const modeMeta: Record<MultiChannelPlotMode, { title: string; subtitle: string }> = {
-    adc_x: { title: "ADC_X", subtitle: "Histogram accumulated in window" },
-    adc_gtop: { title: "ADC_GTOP", subtitle: "Histogram accumulated in window" },
-    adc_gbot: { title: "ADC_GBOT", subtitle: "Histogram accumulated in window" },
-    rate_vs_time: { title: "Rate vs Time", subtitle: "Line series in Hz per sample interval" },
+    adc_x: { title: "ADC_X Spectrum (accumulated in window)", subtitle: "Counts accumulated in current window" },
+    adc_gtop: { title: "ADC_GTOP Spectrum (accumulated in window)", subtitle: "Counts accumulated in current window" },
+    adc_gbot: { title: "ADC_GBOT Spectrum (accumulated in window)", subtitle: "Counts accumulated in current window" },
+    rate_vs_time: { title: "Rate Trend (Hz)", subtitle: "Per sampling interval" },
   };
 
   const openFocusedChart = (index: number) => {
@@ -683,7 +684,7 @@ function MonitorWall({
               <option value="adc_x">All ADC_X</option>
               <option value="adc_gtop">All ADC_GTOP</option>
               <option value="adc_gbot">All ADC_GBOT</option>
-              <option value="rate_vs_time">All Rate vs Time</option>
+              <option value="rate_vs_time">All Rate Trend (Hz)</option>
             </select>
           </label>
           <div className="monitor-status-pill">
@@ -724,7 +725,7 @@ function MonitorWall({
             >
               <div className="monitor-card-header">
                 <h3>Channel {channel}</h3>
-                <span>{(snapshot.counts_by_channel[String(channel)] ?? 0).toFixed(2)} Hz</span>
+                <span>{(snapshot.counts_by_channel[String(channel)] ?? 0).toFixed(0)} counts</span>
               </div>
               <div className="monitor-card-chart">
                 {isRate ? (
@@ -822,7 +823,7 @@ function MonitorChartModal({
         <header className="monitor-modal-header">
           <div>
             <h2>Channel {channel}</h2>
-            <p>{countsHz.toFixed(2)} Hz · Expanded monitor view</p>
+            <p>{countsHz.toFixed(0)} counts in current window · Expanded monitor view</p>
           </div>
           <label>
             Visualization Mode
@@ -830,7 +831,7 @@ function MonitorChartModal({
               <option value="adc_x">ADC_X</option>
               <option value="adc_gtop">ADC_GTOP</option>
               <option value="adc_gbot">ADC_GBOT</option>
-              <option value="rate_vs_time">Rate vs Time</option>
+              <option value="rate_vs_time">Rate Trend (Hz)</option>
             </select>
           </label>
         </header>
@@ -911,6 +912,7 @@ function RateMapPanel({
         <div className="gradient" />
         <span>{heatMax.toFixed(2)} Hz</span>
       </div>
+      <p className="plot-caption">Color scale: Rate [Hz]</p>
     </div>
   );
 }

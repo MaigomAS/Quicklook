@@ -172,7 +172,7 @@ export function Histogram({
         : null}
       {showXAxisLabel ? (
         <text x={chartWidth / 2} y={chartHeight - 4} textAnchor="middle" className="plot-axis-label" style={{ fontSize: `${metrics.axisLabelFont}px` }}>
-          ADC units (X)
+          ADC units
         </text>
       ) : null}
       {showYAxisLabel ? (
@@ -184,7 +184,7 @@ export function Histogram({
           className="plot-axis-label"
           style={{ fontSize: `${metrics.axisLabelFont}px` }}
         >
-          Counts (Y)
+          Counts
         </text>
       ) : null}
     </svg>
@@ -261,7 +261,7 @@ export function LineSeries({
         : null}
       {showXAxisLabel ? (
         <text x={chartWidth / 2} y={chartHeight - 4} textAnchor="middle" className="plot-axis-label" style={{ fontSize: `${metrics.axisLabelFont}px` }}>
-          Time windows (X)
+          Time
         </text>
       ) : null}
       {showYAxisLabel ? (
@@ -273,7 +273,7 @@ export function LineSeries({
           className="plot-axis-label"
           style={{ fontSize: `${metrics.axisLabelFont}px` }}
         >
-          Rate Hz (Y)
+          Rate [Hz]
         </text>
       ) : null}
     </svg>
