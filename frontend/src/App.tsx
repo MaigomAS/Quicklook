@@ -63,6 +63,8 @@ const histogramStreams: Array<{ key: "adc_x" | "adc_gtop" | "adc_gbot"; label: s
   { key: "adc_gbot", label: "adc_gbot" },
 ];
 
+const HISTOGRAM_BIN_COUNT = 64;
+
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
 const niceCeil = (value: number) => {
@@ -118,9 +120,14 @@ const normalizeHistogramRecord = (record?: Record<string, number[]>, channels: n
   Object.fromEntries(
     channels.map((channel) => {
       const values = record?.[String(channel)] ?? [];
+      const normalizedValues = Array.isArray(values)
+        ? values.slice(0, HISTOGRAM_BIN_COUNT).map((value) => (Number.isFinite(value) ? value : 0))
+        : [];
       return [
         String(channel),
-        Array.isArray(values) ? values.map((value) => (Number.isFinite(value) ? value : 0)) : Array(64).fill(0),
+        normalizedValues.length < HISTOGRAM_BIN_COUNT
+          ? [...normalizedValues, ...Array(HISTOGRAM_BIN_COUNT - normalizedValues.length).fill(0)]
+          : normalizedValues,
       ];
     })
   );
