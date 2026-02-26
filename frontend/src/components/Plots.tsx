@@ -7,6 +7,7 @@ type SharedPlotProps = {
   data: number[];
   height?: number;
   width?: number;
+  yMax?: number;
   showXAxisLabel?: boolean;
   showYAxisLabel?: boolean;
   showXTicks?: boolean;
@@ -56,11 +57,13 @@ const getPlotMetrics = (chartWidth: number, chartHeight: number, variant: PlotVa
 export function MiniPlotChart({
   kind,
   data,
+  yMax,
   showXAxisLabel,
   showYAxisLabel,
 }: {
   kind: "histogram" | "line";
   data: number[];
+  yMax?: number;
   showXAxisLabel: boolean;
   showYAxisLabel: boolean;
 }) {
@@ -74,6 +77,7 @@ export function MiniPlotChart({
           data={data}
           width={size.width}
           height={size.height}
+          yMax={yMax}
           showXAxisLabel={showXAxisLabel}
           showYAxisLabel={showYAxisLabel}
           variant="mini"
@@ -83,6 +87,7 @@ export function MiniPlotChart({
           data={data}
           width={size.width}
           height={size.height}
+          yMax={yMax}
           showXAxisLabel={showXAxisLabel}
           showYAxisLabel={showYAxisLabel}
           variant="mini"
@@ -96,6 +101,7 @@ export function Histogram({
   data,
   height = 220,
   width,
+  yMax,
   showXAxisLabel = true,
   showYAxisLabel = true,
   showXTicks = true,
@@ -103,7 +109,7 @@ export function Histogram({
   variant = "mini",
 }: SharedPlotProps) {
   const safeData = data.length > 0 ? data : Array(64).fill(0);
-  const max = Math.max(1, ...safeData);
+  const max = Number.isFinite(yMax) && yMax! > 0 ? yMax! : Math.max(1, ...safeData);
   const chartWidth = Math.max(60, width ?? Math.max(safeData.length, 64));
   const chartHeight = Math.max(48, height);
   const metrics = getPlotMetrics(chartWidth, chartHeight, variant, showYTicks, showXTicks || showXAxisLabel);
@@ -131,6 +137,7 @@ export function Histogram({
             width={Math.max(0.6, barWidth * 0.84)}
             height={barHeight}
             rx={variant === "modal" ? 1.2 : 0.5}
+            className="plot-bar"
           />
         );
       })}
@@ -165,12 +172,19 @@ export function Histogram({
         : null}
       {showXAxisLabel ? (
         <text x={chartWidth / 2} y={chartHeight - 4} textAnchor="middle" className="plot-axis-label" style={{ fontSize: `${metrics.axisLabelFont}px` }}>
-          ADC units
+          ADC units (X)
         </text>
       ) : null}
       {showYAxisLabel ? (
-        <text x={margin.left + 2} y={margin.top + 10} textAnchor="start" className="plot-axis-label" style={{ fontSize: `${metrics.axisLabelFont}px` }}>
-          Counts
+        <text
+          x={Math.max(10, margin.left - 16)}
+          y={margin.top + innerHeight / 2}
+          textAnchor="middle"
+          transform={`rotate(-90 ${Math.max(10, margin.left - 16)} ${margin.top + innerHeight / 2})`}
+          className="plot-axis-label"
+          style={{ fontSize: `${metrics.axisLabelFont}px` }}
+        >
+          Counts (Y)
         </text>
       ) : null}
     </svg>
@@ -181,6 +195,7 @@ export function LineSeries({
   data,
   height = 220,
   width,
+  yMax,
   showXAxisLabel = true,
   showYAxisLabel = true,
   showXTicks = true,
@@ -191,7 +206,7 @@ export function LineSeries({
     return <div className="line-empty">no points yet</div>;
   }
 
-  const max = Math.max(...data, 1);
+  const max = Number.isFinite(yMax) && yMax! > 0 ? yMax! : Math.max(...data, 1);
   const chartWidth = Math.max(60, width ?? 100);
   const chartHeight = Math.max(48, height);
   const metrics = getPlotMetrics(chartWidth, chartHeight, variant, showYTicks, showXTicks || showXAxisLabel);
@@ -216,7 +231,7 @@ export function LineSeries({
       })}
       <line x1={margin.left} y1={margin.top + innerHeight} x2={chartWidth - margin.right} y2={margin.top + innerHeight} className="plot-axis" />
       <line x1={margin.left} y1={margin.top} x2={margin.left} y2={margin.top + innerHeight} className="plot-axis" />
-      <polyline points={points} fill="none" stroke="var(--ql-accent-strong)" strokeWidth={variant === "modal" ? 2.4 : 2} />
+      <polyline points={points} fill="none" stroke="var(--ql-accent-strong)" strokeWidth={variant === "modal" ? 2.4 : 2} className="plot-line" />
       {showYTicks
         ? yTicks.map((tick) => {
             const y = margin.top + innerHeight - (tick / max) * innerHeight;
@@ -246,12 +261,19 @@ export function LineSeries({
         : null}
       {showXAxisLabel ? (
         <text x={chartWidth / 2} y={chartHeight - 4} textAnchor="middle" className="plot-axis-label" style={{ fontSize: `${metrics.axisLabelFont}px` }}>
-          Time (windows)
+          Time windows (X)
         </text>
       ) : null}
       {showYAxisLabel ? (
-        <text x={margin.left + 2} y={margin.top + 10} textAnchor="start" className="plot-axis-label" style={{ fontSize: `${metrics.axisLabelFont}px` }}>
-          Rate (Hz)
+        <text
+          x={Math.max(10, margin.left - 16)}
+          y={margin.top + innerHeight / 2}
+          textAnchor="middle"
+          transform={`rotate(-90 ${Math.max(10, margin.left - 16)} ${margin.top + innerHeight / 2})`}
+          className="plot-axis-label"
+          style={{ fontSize: `${metrics.axisLabelFont}px` }}
+        >
+          Rate Hz (Y)
         </text>
       ) : null}
     </svg>

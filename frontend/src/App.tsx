@@ -173,6 +173,15 @@ const normalizeStatus = (data?: Partial<Status>) => ({
 type ViewMode = "dashboard" | "monitor";
 type MultiChannelPlotMode = "adc_x" | "adc_gtop" | "adc_gbot" | "rate_vs_time";
 
+const getModeYAxisMax = (snapshot: Snapshot, mode: MultiChannelPlotMode, channels: number[]) => {
+  const values =
+    mode === "rate_vs_time"
+      ? channels.flatMap((channel) => snapshot.rate_history[String(channel)] ?? [])
+      : channels.flatMap((channel) => snapshot.histograms[mode][String(channel)] ?? []);
+  const max = Math.max(1, ...values);
+  return niceCeil(max * 1.1);
+};
+
 function App({ viewMode = "dashboard" }: { viewMode?: ViewMode }) {
   const [status, setStatus] = useState<Status>({ running: false, connected: false });
   const [snapshot, setSnapshot] = useState<Snapshot>(defaultSnapshot);
@@ -564,7 +573,23 @@ function MonitorWall({
   const [plotMode, setPlotMode] = useState<MultiChannelPlotMode>("adc_x");
   const [focusedChannelIndex, setFocusedChannelIndex] = useState<number | null>(null);
   const [focusedMode, setFocusedMode] = useState<MultiChannelPlotMode>("adc_x");
+  const [lockedYAxisByMode, setLockedYAxisByMode] = useState<Record<MultiChannelPlotMode, number>>({
+    adc_x: 1,
+    adc_gtop: 1,
+    adc_gbot: 1,
+    rate_vs_time: 1,
+  });
   const channels = snapshot.channels.length > 0 ? snapshot.channels : defaultChannels;
+
+  useEffect(() => {
+    setLockedYAxisByMode((prev) => ({
+      ...prev,
+      [plotMode]: prev[plotMode] > 1 ? prev[plotMode] : getModeYAxisMax(snapshot, plotMode, channels),
+    }));
+  }, [channels, plotMode, snapshot]);
+
+  const currentYAxisMax = lockedYAxisByMode[plotMode];
+  const focusedYAxisMax = lockedYAxisByMode[focusedMode];
 
   const modeMeta: Record<MultiChannelPlotMode, { title: string; subtitle: string }> = {
     adc_x: { title: "ADC_X", subtitle: "Histogram of counts vs ADC units" },
@@ -662,9 +687,9 @@ function MonitorWall({
               </div>
               <div className="monitor-card-chart">
                 {isRate ? (
-                  <MiniPlotChart kind="line" data={chartData} showXAxisLabel showYAxisLabel />
+                  <MiniPlotChart kind="line" data={chartData} yMax={currentYAxisMax} showXAxisLabel showYAxisLabel />
                 ) : (
-                  <MiniPlotChart kind="histogram" data={chartData} showXAxisLabel showYAxisLabel />
+                  <MiniPlotChart kind="histogram" data={chartData} yMax={currentYAxisMax} showXAxisLabel showYAxisLabel />
                 )}
               </div>
             </article>
@@ -682,6 +707,7 @@ function MonitorWall({
         adcGtop={focusedChannel === null ? [] : snapshot.histograms.adc_gtop[String(focusedChannel)] ?? []}
         adcGbot={focusedChannel === null ? [] : snapshot.histograms.adc_gbot[String(focusedChannel)] ?? []}
         rateTrend={focusedChannel === null ? [] : snapshot.rate_history[String(focusedChannel)] ?? []}
+        yMax={focusedYAxisMax}
         onClose={closeFocusedChart}
         onPrevious={goToPreviousChannel}
         onNext={goToNextChannel}
@@ -700,6 +726,7 @@ function MonitorChartModal({
   adcGtop,
   adcGbot,
   rateTrend,
+  yMax,
   onClose,
   onPrevious,
   onNext,
@@ -713,6 +740,7 @@ function MonitorChartModal({
   adcGtop: number[];
   adcGbot: number[];
   rateTrend: number[];
+  yMax: number;
   onClose: () => void;
   onPrevious: () => void;
   onNext: () => void;
@@ -767,9 +795,9 @@ function MonitorChartModal({
         </header>
         <div className="monitor-modal-chart">
           {isRate ? (
-            <MiniPlotChart kind="line" data={chartData} showXAxisLabel showYAxisLabel />
+            <MiniPlotChart kind="line" data={chartData} yMax={yMax} showXAxisLabel showYAxisLabel />
           ) : (
-            <MiniPlotChart kind="histogram" data={chartData} showXAxisLabel showYAxisLabel />
+            <MiniPlotChart kind="histogram" data={chartData} yMax={yMax} showXAxisLabel showYAxisLabel />
           )}
         </div>
         <footer className="monitor-modal-footer">
